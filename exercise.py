@@ -52,6 +52,8 @@ def IdentityBlock(kernel_size, filters):
         Conv(filters1, (1, 1)), BatchNorm(), Relu,
         Conv(filters2, (ks, ks), padding='SAME'), BatchNorm(), Relu,
         Conv(input_shape[3], (1, 1)), BatchNorm())
+  # Since output channel depends on where this block is called,
+  # Do not fix it until block allocation is detected.
   Main = stax.shape_dependent(make_main)
   return stax.serial(FanOut(2), stax.parallel(Main, Identity), FanInSum, Relu)
 
