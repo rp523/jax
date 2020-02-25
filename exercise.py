@@ -127,6 +127,7 @@ def main():
     def update(i, opt_state, batch):
         params = get_params(opt_state)
         return opt_update(i, grad(loss)(params, batch), opt_state)
+    
     opt_state = opt_init(init_params)
     for i in range(NUM_STEPS):
         t0 = time.time()
