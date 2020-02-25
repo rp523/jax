@@ -19,6 +19,7 @@ optimization library.
 """
 
 import numpy.random as npr
+import time
 
 import jax.numpy as np
 from jax.config import config
@@ -123,7 +124,9 @@ if __name__ == "__main__":
 
     opt_state = opt_init(init_params)
     for i in range(NUM_STEPS):
-        print(i)
+        start_time = time.time()
         opt_state = update(i, opt_state, next(batch_getter))
+        end_time = time.time()
+        print(i, "{:.2f}s".format(end_time - start_time))
     trained_params = get_params(opt_state)
 
