@@ -60,7 +60,7 @@ def IdentityBlock(kernel_size, filters):
 
 def ResNet50(num_classes):
   return stax.serial(
-      GeneralConv(('HWCN', 'OIHW', 'NHWC'), out_chan = 64, filter_shape = (7, 7), strides = (2, 2), padding = 'SAME'),
+      Conv(out_chan = 64, filter_shape = (7, 7), strides = (2, 2), padding = 'SAME'),
       BatchNorm(), Relu, MaxPool((3, 3), strides=(2, 2)),
       ConvBlock(3, [64, 64, 256], strides=(1, 1)),
       IdentityBlock(3, [64, 64]),
@@ -86,7 +86,7 @@ if __name__ == "__main__":
 
   BATCH_SIZE = 8
   NUM_CLASSES = 1001
-  INPUT_SHAPE = (224, 224, 3, BATCH_SIZE)
+  INPUT_SHAPE = (BATCH_SIZE, 224, 224, 3)
   NUM_STEPS = 1000
 
   init_fun, predict_fun = ResNet50(NUM_CLASSES)
