@@ -64,7 +64,9 @@ def IdentityBlock(kernel_size, filters):
 def ResNet50(num_classes):
     return stax.serial(
         Conv(64, (7, 7), (2, 2), 'SAME'),
-        BatchNorm(), Relu, MaxPool((3, 3), strides=(2, 2)),
+        BatchNorm(),
+        Relu,
+        MaxPool((3, 3), strides=(2, 2)),
         ConvBlock(3, [64, 64, 256], strides=(1, 1)),
         IdentityBlock(3, [64, 64]),
         IdentityBlock(3, [64, 64]),
@@ -81,16 +83,19 @@ def ResNet50(num_classes):
         ConvBlock(3, [512, 512, 2048]),
         IdentityBlock(3, [512, 512]),
         IdentityBlock(3, [512, 512]),
-        AvgPool((7, 7)), Flatten, Dense(num_classes), LogSoftmax)
+        AvgPool((7, 7)),
+        Flatten,
+        Dense(num_classes),
+        LogSoftmax)
 
 
-if __name__ == "__main__":
+def main():
     rng_key = random.PRNGKey(0)
     
     BATCH_SIZE = 8
     NUM_CLASSES = 1001
     INPUT_SHAPE = (BATCH_SIZE, 224, 224, 3)
-    NUM_STEPS = 1000
+    NUM_STEPS = 10
     
     init_fun, predict_fun = ResNet50(NUM_CLASSES)
     _, init_params = init_fun(rng_key, INPUT_SHAPE)
@@ -116,17 +121,21 @@ if __name__ == "__main__":
 
     opt_init, opt_update, get_params = optimizers.momentum(0.1, mass=0.9)
     batch_getter = synth_batches(BATCH_SIZE)
-
+    
+    # slightly faster than jax-jit
     @jit
     def update(i, opt_state, batch):
         params = get_params(opt_state)
         return opt_update(i, grad(loss)(params, batch), opt_state)
-
     opt_state = opt_init(init_params)
     for i in range(NUM_STEPS):
-        start_time = time.time()
+        t0 = time.time()
         opt_state = update(i, opt_state, next(batch_getter))
-        end_time = time.time()
-        print(i, "{:.2f}s".format(end_time - start_time))
-    trained_params = get_params(opt_state)
+        t1 = time.time()
+        print(i, "{:.1f}ms".format(1000 * (t1 - t0)))
+    trained_params = get_params(opt_state)  # list format
+
+if __name__ == "__main__":
+    main()
+    print("Done.")
 
