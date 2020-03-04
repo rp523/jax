@@ -28,7 +28,7 @@ from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
                                    FanOut, Flatten, GeneralConv, Identity,
-                                   MaxPool, Relu, LogSoftmax)
+                                   MaxPool, Relu, LogSoftmax, Softmax)
 
 
 # ResNet blocks compose other layers
@@ -86,7 +86,7 @@ def ResNet50(num_classes):
         AvgPool((7, 7)),
         Flatten,
         Dense(num_classes),
-        LogSoftmax)
+        Softmax)
 
 
 def main():
@@ -95,15 +95,15 @@ def main():
     BATCH_SIZE = 8
     NUM_CLASSES = 1001
     INPUT_SHAPE = (BATCH_SIZE, 224, 224, 3)
-    NUM_STEPS = 10
+    NUM_STEPS = 30
     
     init_fun, predict_fun = ResNet50(NUM_CLASSES)
     _, init_params = init_fun(rng_key, INPUT_SHAPE)
 
     def loss(params, batch):
         inputs, targets = batch
-        logits = predict_fun(params, inputs)
-        return -np.sum(logits * targets)
+        preds = predict_fun(params, inputs)
+        return -np.sum(targets * np.log(preds + 1E-10))
 
     def accuracy(params, batch):
         inputs, targets = batch
@@ -111,7 +111,7 @@ def main():
         predicted_class = np.argmax(predict_fun(params, inputs), axis=-1)
         return np.mean(predicted_class == target_class)
 
-    def synth_batches(batch_size):
+    def make_batch_getter(batch_size):
         rng = npr.RandomState(0)
         while True:
             images = rng.rand(*INPUT_SHAPE).astype('float32')
@@ -120,7 +120,7 @@ def main():
             yield images, onehot_labels
 
     opt_init, opt_update, get_params = optimizers.momentum(0.1, mass=0.9)
-    batch_getter = synth_batches(BATCH_SIZE)
+    batch_getter = make_batch_getter(BATCH_SIZE)
     
     # slightly faster than jax-jit
     @jit
@@ -131,9 +131,10 @@ def main():
     opt_state = opt_init(init_params)
     for i in range(NUM_STEPS):
         t0 = time.time()
-        opt_state = update(i, opt_state, next(batch_getter))
+        batch = next(batch_getter)
+        opt_state = update(i, opt_state, batch)
         t1 = time.time()
-        print(i, "{:.1f}ms".format(1000 * (t1 - t0)))
+        print(i, "{:.1f}ms".format(1000 * (t1 - t0)), loss(get_params(opt_state), batch))
     trained_params = get_params(opt_state)  # list format
 
 if __name__ == "__main__":
