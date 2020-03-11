@@ -23,7 +23,7 @@ import time
 
 import jax.numpy as np
 from jax.config import config
-from jax import jit, grad, random
+from jax import jit, grad, random, value_and_grad
 from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
@@ -126,15 +126,16 @@ def main():
     @jit
     def update(i, opt_state, batch):
         params = get_params(opt_state)
-        return opt_update(i, grad(loss)(params, batch), opt_state)
+        loss_val, grad_val = value_and_grad(loss)(params, batch)
+        return loss_val, opt_update(i, grad_val, opt_state)
     
     opt_state = opt_init(init_params)
     for i in range(NUM_STEPS):
         t0 = time.time()
         batch = next(batch_getter)
-        opt_state = update(i, opt_state, batch)
+        loss_val, opt_state = update(i, opt_state, batch)
         t1 = time.time()
-        print(i, "{:.1f}ms".format(1000 * (t1 - t0)), loss(get_params(opt_state), batch))
+        print(i, "{:.1f}ms".format(1000 * (t1 - t0)), loss_val)
     trained_params = get_params(opt_state)  # list format
 
 if __name__ == "__main__":
