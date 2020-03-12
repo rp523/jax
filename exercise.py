@@ -18,10 +18,10 @@ This file uses the stax neural network definition library and the optimizers
 optimization library.
 """
 
-import numpy.random as npr
+import numpy as onp
 import time
 
-import jax.numpy as np
+import jax.numpy as jnp
 from jax.config import config
 from jax import jit, grad, random, value_and_grad
 from jax.experimental import optimizers
@@ -103,20 +103,20 @@ def main():
     def loss(params, batch):
         inputs, targets = batch
         preds = predict_fun(params, inputs)
-        return -np.sum(targets * np.log(preds + 1E-10))
+        return -jnp.sum(targets * jnp.log(preds + 1E-10))
 
     def accuracy(params, batch):
         inputs, targets = batch
-        target_class = np.argmax(targets, axis=-1)
-        predicted_class = np.argmax(predict_fun(params, inputs), axis=-1)
-        return np.mean(predicted_class == target_class)
+        target_class = jnp.argmax(targets, axis=-1)
+        predicted_class = jnp.argmax(predict_fun(params, inputs), axis=-1)
+        return jnp.mean(predicted_class == target_class)
 
     def make_batch_getter(batch_size):
-        rng = npr.RandomState(0)
+        rng = onp.random.RandomState(0)
         while True:
             images = rng.rand(*INPUT_SHAPE).astype('float32')
             labels = rng.randint(NUM_CLASSES, size=(batch_size, 1))
-            onehot_labels = labels == np.arange(NUM_CLASSES)
+            onehot_labels = labels == jnp.arange(NUM_CLASSES)
             yield images, onehot_labels
 
     opt_init, opt_update, get_params = optimizers.momentum(0.1, mass=0.9)
