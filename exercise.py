@@ -23,7 +23,7 @@ import time
 
 import jax.numpy as jnp
 from jax.config import config
-from jax import jit, grad, random, value_and_grad
+from jax import jit, grad, random, value_and_grad, device_put, tree_map
 from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
@@ -121,11 +121,41 @@ def main():
 
     opt_init, opt_update, get_params = optimizers.momentum(0.1, mass=0.9)
     batch_getter = make_batch_getter(BATCH_SIZE)
-    
+
+    def show_line(val, shift, cnt):
+        #for i in range(shift):
+        #print("    ", end = "")
+        a = device_put(val)
+        a = jnp.array(a)
+        print(a.trace)
+        exit()
+        for v1 in a:
+            for v2 in v1:
+                for v3 in v2:
+                    for v4 in v3:
+                        print(v4, end = "")
+                    print()
+        #onp.save("{}.npy".format(cnt), onp.asarray(val))
+        return (cnt + 1)
+    def show_rec(input_val, shift, cnt):
+        if isinstance(input_val, list) or isinstance(input_val, tuple):
+            input_val = list(input_val)
+            n_data = len(input_val)
+            assert(n_data >= 0)
+            if n_data == 1:
+                assert(0)
+                cnt = show_line(input_val[0], shift, cnt)
+            elif n_data > 1:
+                for sub in input_val:
+                    cnt = show_rec(sub, shift + 1, cnt)
+        else:
+            cnt = show_line(input_val, shift, cnt)
+        return cnt
     # slightly faster than jax-jit
     @jit
     def update(i, opt_state, batch):
         params = get_params(opt_state)
+        print(tree_map(lambda x: x[0], params));exit()
         loss_val, grad_val = value_and_grad(loss)(params, batch)
         return loss_val, opt_update(i, grad_val, opt_state)
     

@@ -164,7 +164,7 @@ def visualize(data_path, dst_dir_path):
         print(dst_path)
 
 if __name__ == "__main__":
-    data_path = r"K:\MachineLearning\003_Dataset\cityscapes"
-    dst_dir_path = r"E:\work\xx_soft_dev\python_workspace\jax\tmp"
+    data_path = r"/mnt/hdd/dataset/cityscapes"
+    dst_dir_path = r"."
     visualize(data_path, dst_dir_path)
     
