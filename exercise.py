@@ -89,35 +89,6 @@ def ResNet50(num_classes):
         Dense(num_classes),
         Softmax)
 
-def recursive_proc(jax_params, infunc, dir, cnt = 0, recursive = 0):
-    if isinstance(jax_params, list) or isinstance(jax_params, tuple):
-        tmp = list(jax_params)
-        for i in range(len(list(jax_params))):
-            tmp[i], cnt = recursive_proc(jax_params[i], infunc, dir, cnt, recursive + 1)
-        if isinstance(jax_params, list):
-            jax_params = list(tmp)
-        elif isinstance(jax_params, tuple):
-            jax_params = tuple(tmp)
-    else:
-        jax_params = infunc(jax_params, dir, cnt)
-        cnt += 1
-    
-    if recursive == 0:
-        return jax_params
-    else:
-        return jax_params, cnt
-
-def load_func(val, dir, cnt):
-    return onp.load(os.path.join(dir, "{}.npy".format(cnt)), allow_pickle = True)
-def save_func(val, dir, cnt):
-    onp.save(os.path.join(dir, "{}.npy".format(cnt)), val)
-    return val
-def equal_func(val, dir, cnt):
-    loaded_arr = onp.load(os.path.join(dir, "{}.npy".format(cnt)), allow_pickle = True)
-    assert((val == loaded_arr).all())
-def not_equal_func(val, dir, cnt):
-    loaded_arr = onp.load(os.path.join(dir, "{}.npy".format(cnt)), allow_pickle = True)
-    assert(not (val == loaded_arr).all())
         
 def main():
     rng_key = random.PRNGKey(0)
@@ -125,7 +96,7 @@ def main():
     BATCH_SIZE = 8
     NUM_CLASSES = 1001
     INPUT_SHAPE = (BATCH_SIZE, 224, 224, 3)
-    NUM_STEPS = 1
+    NUM_STEPS = 30
     MODEL_DIR = "model"
     
     init_fun, predict_fun = ResNet50(NUM_CLASSES)
@@ -161,7 +132,6 @@ def main():
         return loss_val, opt_update(i, grad_val, opt_state)
     
     opt_state = opt_init(init_params)
-    recursive_proc(get_params(opt_state), save_func, MODEL_DIR)
     for i in range(NUM_STEPS):
         t0 = time.time()
         batch = next(batch_getter)
@@ -169,10 +139,6 @@ def main():
         t1 = time.time()
         print(i, "{:.1f}ms".format(1000 * (t1 - t0)), loss_val)
     trained_params = get_params(opt_state)  # list format
-    
-    recursive_proc(trained_params, not_equal_func, MODEL_DIR)
-    loaded_params = recursive_proc(trained_params, load_func, MODEL_DIR)
-    recursive_proc(loaded_params, equal_func, MODEL_DIR)
 
 if __name__ == "__main__":
     main()
