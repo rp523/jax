@@ -63,7 +63,7 @@ def IdentityBlock(kernel_size, filters):
 
 # ResNet architectures compose layers and ResNet blocks
 
-def ResNet50(num_classes):
+def SampleNetwork(num_classes):
     return stax.serial(
         Conv(64, (7, 7), (2, 2), 'SAME'),
         BatchNorm(),
@@ -76,15 +76,6 @@ def ResNet50(num_classes):
         IdentityBlock(3, [128, 128]),
         IdentityBlock(3, [128, 128]),
         IdentityBlock(3, [128, 128]),
-        ConvBlock(3, [256, 256, 1024]),
-        IdentityBlock(3, [256, 256]),
-        IdentityBlock(3, [256, 256]),
-        IdentityBlock(3, [256, 256]),
-        IdentityBlock(3, [256, 256]),
-        IdentityBlock(3, [256, 256]),
-        ConvBlock(3, [512, 512, 2048]),
-        IdentityBlock(3, [512, 512]),
-        IdentityBlock(3, [512, 512]),
         AvgPool((7, 7)),
         Flatten,
         Dense(num_classes),
@@ -96,11 +87,13 @@ def main():
     
     BATCH_SIZE = 8
     NUM_CLASSES = 1001
-    INPUT_SHAPE = (BATCH_SIZE, 224, 224, 3)
+    IMG_H = 128
+    IMG_W = 256
+    INPUT_SHAPE = (BATCH_SIZE, IMG_H, IMG_W, 3)
     NUM_STEPS = 30
     MODEL_DIR = "model"
     
-    init_fun, predict_fun = ResNet50(NUM_CLASSES)
+    init_fun, predict_fun = SampleNetwork(NUM_CLASSES)
     _, init_params = init_fun(rng_key, INPUT_SHAPE)
 
     def loss(params, batch):
@@ -116,7 +109,7 @@ def main():
 
     def make_batch_getter(batch_size):
         rng = onp.random.RandomState(0)
-        cityscapes = CityScapes(r"/mnt/hdd/dataset/cityscapes", 256, 512)
+        cityscapes = CityScapes(r"/mnt/hdd/dataset/cityscapes", IMG_H, IMG_W)
         gen = cityscapes.make_generator("train",
                                         label_txt_list = ["car", "person"],
                                         batch_size = batch_size,
