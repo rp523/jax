@@ -31,6 +31,7 @@ from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
                                    FanOut, Flatten, GeneralConv, Identity,
                                    MaxPool, Relu, LogSoftmax, Softmax)
 
+from dataset.cityscapes import CityScapes
 
 # ResNet blocks compose other layers
 
@@ -115,8 +116,13 @@ def main():
 
     def make_batch_getter(batch_size):
         rng = onp.random.RandomState(0)
+        cityscapes = CityScapes(r"/mnt/hdd/dataset/cityscapes", 256, 512)
+        gen = cityscapes.make_generator("train",
+                                        label_txt_list = ["car", "person"],
+                                        batch_size = batch_size,
+                                        seed = 0)
         while True:
-            images = rng.rand(*INPUT_SHAPE).astype('float32')
+            images, _ = next(gen)
             labels = rng.randint(NUM_CLASSES, size=(batch_size, 1))
             onehot_labels = labels == jnp.arange(NUM_CLASSES)
             yield images, onehot_labels
