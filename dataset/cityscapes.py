@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 import json
-from jax.interpreters.batching import batch
+import jax
 
 '''
 [Labels]
@@ -121,8 +121,7 @@ class CityScapes:
                     label_dict[obj_label] = np.append(label_dict[obj_label], rect, axis = 0)
         return label_dict
     
-    def make_generator(self, train_type, label_txt_list, batch_size, seed):
-        np.random.seed(seed)
+    def make_generator(self, train_type, label_txt_list, batch_size, rng_key):
         train_type_dict = self.__all[train_type]
         key_list = list(train_type_dict.keys())
         n_data = len(key_list)
@@ -131,8 +130,7 @@ class CityScapes:
             images = np.empty(0, dtype = np.float32)
             labels = []
             
-            for b in range(batch_size):
-                i = np.random.randint(n_data)
+            for i in jax.random.randint(rng_key, (batch_size,), 0, n_data):
                 key = key_list[i]
                 tgt = train_type_dict[key]
                 assert("left" in tgt.keys())
@@ -158,21 +156,21 @@ class CityScapes:
                     images = np.append(images, left_arr, axis = 0)
                 labels.append(label_info)
             
-            images = images / 255
-            yield images, labels
+            yield images.astype(np.float32), labels
             
 def visualize(data_path, dst_dir_path):
     from PIL import ImageDraw, ImageFont
     cityscapes = CityScapes(data_path, 256, 512)
     batch_size = 30
+    rng_key = jax.random.PRNGKey(0)
     gen = cityscapes.make_generator("train",
                                     label_txt_list = ["car", "person"],
                                     batch_size = batch_size,
-                                    seed = 0)
+                                    rng_key = rng_key)
     images, labels = next(gen)
     for b in range(batch_size):
         left_arr, label_dict = images[b], labels[b]
-        pil = Image.fromarray(left_arr)
+        pil = Image.fromarray(left_arr.astype(np.uint8))
         dr = ImageDraw.Draw(pil)
         for label_name, rect_arr in label_dict.items():
             for rect in rect_arr:

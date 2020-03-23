@@ -113,7 +113,7 @@ def main():
         gen = cityscapes.make_generator("train",
                                         label_txt_list = ["car", "person"],
                                         batch_size = batch_size,
-                                        seed = 0)
+                                        rng_key = rng_key)
         while True:
             images, _ = next(gen)
             labels = rng.randint(NUM_CLASSES, size=(batch_size, 1))
