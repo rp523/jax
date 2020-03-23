@@ -52,7 +52,7 @@ out of roi
 
 class CityScapes:
 
-    def __init__(self, base_path):
+    def __init__(self, base_path, img_h = 1024, img_w = 2048):
         
         # initialize
         self.__all = {}
@@ -85,6 +85,9 @@ class CityScapes:
                     file_key = file_name[:file_name.rfind(ext)]
             assert(file_key != None)
             self.__add_key("left", file_path, train_type, file_key)
+        
+        self.__img_h = img_h
+        self.__img_w = img_w
         
     # initializetool function
     def __add_key(self, file_type, file_path, train_type, file_key):
@@ -135,13 +138,14 @@ class CityScapes:
 
             left_path = tgt["left"]
             left_pil = Image.open(left_path)
+            left_pil = left_pil.resize((self.__img_w, self.__img_h))
             left_arr = np.asarray(left_pil)
             
             yield left_arr, label_info
             
 def visualize(data_path, dst_dir_path):
     from PIL import ImageDraw, ImageFont
-    cityscapes = CityScapes(data_path)
+    cityscapes = CityScapes(data_path, 256, 512)
     gen = cityscapes.make_generator("train",
                                     label_txt_list = ["car", "person"],
                                     seed = 0)
