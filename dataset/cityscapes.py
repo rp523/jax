@@ -127,9 +127,10 @@ class CityScapes:
         key_list = list(train_type_dict.keys())
         n_data = len(key_list)
         
-        images = np.empty(0)
-        labels = []
         while True:
+            images = np.empty(0, dtype = np.float32)
+            labels = []
+            
             for b in range(batch_size):
                 i = np.random.randint(n_data)
                 key = key_list[i]
@@ -156,7 +157,8 @@ class CityScapes:
                 else:
                     images = np.append(images, left_arr, axis = 0)
                 labels.append(label_info)
-                
+            
+            images = images / 255
             yield images, labels
             
 def visualize(data_path, dst_dir_path):
