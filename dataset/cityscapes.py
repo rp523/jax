@@ -103,17 +103,15 @@ class CityScapes:
         info = json.load(open(json_path, "r", encoding="utf-8_sig"))
         img_h = info["imgHeight"]
         img_w = info["imgWidth"]
-        rate_y = self.__img_h / img_h
-        rate_x = self.__img_w / img_w
         obj_list = info["objects"]
         for obj in obj_list:
             obj_label = obj["label"]
             if obj_label in label_list:
                 polygons = np.array(obj["polygon"])
-                x0 = np.clip(polygons[:,0].min() * rate_x, 0, self.__img_w - 1)
-                x1 = np.clip(polygons[:,0].max() * rate_x, 0, self.__img_w - 1)
-                y0 = np.clip(polygons[:,1].min() * rate_y, 0, self.__img_h - 1)
-                y1 = np.clip(polygons[:,1].max() * rate_y, 0, self.__img_h - 1)
+                x0 = np.clip(polygons[:,0].min() / (img_w - 1), 0, 1.0)
+                x1 = np.clip(polygons[:,0].max() / (img_w - 1), 0, 1.0)
+                y0 = np.clip(polygons[:,1].min() / (img_h - 1), 0, 1.0)
+                y1 = np.clip(polygons[:,1].max() / (img_h - 1), 0, 1.0)
                 rect = np.array([x0, x1, y0, y1]).reshape(1, 4)
                 if not obj_label in label_dict.keys():
                     label_dict[obj_label] = rect
@@ -171,6 +169,7 @@ def visualize(data_path, dst_dir_path):
     for b in range(batch_size):
         left_arr, label_dict = images[b], labels[b]
         pil = Image.fromarray(left_arr.astype(np.uint8))
+        w, h = pil.size
         dr = ImageDraw.Draw(pil)
         for label_name, rect_arr in label_dict.items():
             for rect in rect_arr:
@@ -180,6 +179,12 @@ def visualize(data_path, dst_dir_path):
                 y1 = rect[3]
                 xc = (x0 + x1) // 2
                 yc = (y0 + y1) // 2
+                x0 *= (w - 1)
+                x1 *= (w - 1)
+                xc *= (w - 1)
+                y0 *= (h - 1)
+                y1 *= (h - 1)
+                yc *= (h - 1)
                 dr.rectangle((x0, y0, x1, y1), width = 3, outline = (255, 0, 0))
                 dr.text((xc, yc), label_name, fill = (255, 0, 0))
         dst_path = os.path.join(dst_dir_path, "{}.jpg".format(b))
