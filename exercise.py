@@ -30,6 +30,7 @@ from jax.experimental import stax
 from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
                                    FanOut, Flatten, GeneralConv, Identity,
                                    MaxPool, Relu, LogSoftmax, Softmax)
+from model_maker import net_maker
 
 from dataset.cityscapes import CityScapes
 
@@ -64,6 +65,18 @@ def IdentityBlock(kernel_size, filters):
 # ResNet architectures compose layers and ResNet blocks
 
 def SampleNetwork(num_classes):
+    net = net_maker()
+    net.add_layer(Conv(64, (7, 7), (2, 2), 'SAME'), name = "first")
+    net.add_layer(BatchNorm(), name = "aaa", input_name = "first", is_output = True)
+    net.add_layer(Conv(64, (5, 5), (2, 2), 'VALID'))
+    net.add_layer(Conv(64, (5, 5), (2, 2), 'VALID'))
+    net.add_layer(Conv(64, (5, 5), (2, 2), 'VALID'))
+    net.add_layer(Conv(64, (5, 5), (2, 2), 'VALID'))
+    net.add_layer(Flatten)
+    net.add_layer(Dense(num_classes))
+    net.add_layer(Softmax, name = "output", is_output = True)
+    return net.make_jax_model()
+    
     return stax.serial(
         Conv(64, (7, 7), (2, 2), 'SAME'),
         BatchNorm(),
@@ -99,12 +112,13 @@ def main():
     def loss(params, batch):
         inputs, targets = batch
         preds = predict_fun(params, inputs)
+        preds = preds["output"]
         return -jnp.sum(targets * jnp.log(preds + 1E-10))
 
     def accuracy(params, batch):
         inputs, targets = batch
         target_class = jnp.argmax(targets, axis=-1)
-        predicted_class = jnp.argmax(predict_fun(params, inputs), axis=-1)
+        predicted_class = jnp.argmax(predict_fun(params, inputs), axis=-1)["output"]
         return jnp.mean(predicted_class == target_class)
 
     def make_batch_getter(batch_size):
