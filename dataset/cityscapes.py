@@ -53,9 +53,10 @@ out of roi
 
 class CityScapes:
 
-    def __init__(self, base_path, img_h = 1024, img_w = 2048):
+    def __init__(self, base_path, rng, img_h = 1024, img_w = 2048):
         
         # initialize
+        self.__rng = rng
         self.__all = {}
         
         # json
@@ -119,7 +120,7 @@ class CityScapes:
                     label_dict[obj_label] = np.append(label_dict[obj_label], rect, axis = 0)
         return label_dict
     
-    def make_generator(self, train_type, label_txt_list, batch_size, rng_key):
+    def make_generator(self, train_type, label_txt_list, batch_size):
         train_type_dict = self.__all[train_type]
         key_list = list(train_type_dict.keys())
         n_data = len(key_list)
@@ -128,7 +129,8 @@ class CityScapes:
             images = np.empty(0, dtype = np.float32)
             labels = []
             
-            for i in jax.random.randint(rng_key, (batch_size,), 0, n_data):
+            self.__rng, rng = jax.random.split(self.__rng)
+            for i in jax.random.randint(rng, (batch_size,), 0, n_data):
                 key = key_list[i]
                 tgt = train_type_dict[key]
                 assert("left" in tgt.keys())
@@ -158,38 +160,39 @@ class CityScapes:
             
 def visualize(data_path, dst_dir_path):
     from PIL import ImageDraw, ImageFont
-    cityscapes = CityScapes(data_path, 256, 512)
-    batch_size = 30
     rng_key = jax.random.PRNGKey(0)
+    cityscapes = CityScapes(data_path, rng_key, 256, 512)
+    epoch_num = 10
+    batch_size = 1
     gen = cityscapes.make_generator("train",
                                     label_txt_list = ["car", "person"],
-                                    batch_size = batch_size,
-                                    rng_key = rng_key)
-    images, labels = next(gen)
-    for b in range(batch_size):
-        left_arr, label_dict = images[b], labels[b]
-        pil = Image.fromarray(left_arr.astype(np.uint8))
-        w, h = pil.size
-        dr = ImageDraw.Draw(pil)
-        for label_name, rect_arr in label_dict.items():
-            for rect in rect_arr:
-                x0 = rect[0]
-                x1 = rect[1]
-                y0 = rect[2]
-                y1 = rect[3]
-                xc = (x0 + x1) // 2
-                yc = (y0 + y1) // 2
-                x0 *= (w - 1)
-                x1 *= (w - 1)
-                xc *= (w - 1)
-                y0 *= (h - 1)
-                y1 *= (h - 1)
-                yc *= (h - 1)
-                dr.rectangle((x0, y0, x1, y1), width = 3, outline = (255, 0, 0))
-                dr.text((xc, yc), label_name, fill = (255, 0, 0))
-        dst_path = os.path.join(dst_dir_path, "{}.jpg".format(b))
-        pil.save(dst_path)
-        print(dst_path)
+                                    batch_size = batch_size)
+    for e in range(epoch_num):
+        images, labels = next(gen)
+        for b in range(batch_size):
+            left_arr, label_dict = images[b], labels[b]
+            pil = Image.fromarray(left_arr.astype(np.uint8))
+            w, h = pil.size
+            dr = ImageDraw.Draw(pil)
+            for label_name, rect_arr in label_dict.items():
+                for rect in rect_arr:
+                    x0 = rect[0]
+                    x1 = rect[1]
+                    y0 = rect[2]
+                    y1 = rect[3]
+                    xc = (x0 + x1) // 2
+                    yc = (y0 + y1) // 2
+                    x0 *= (w - 1)
+                    x1 *= (w - 1)
+                    xc *= (w - 1)
+                    y0 *= (h - 1)
+                    y1 *= (h - 1)
+                    yc *= (h - 1)
+                    dr.rectangle((x0, y0, x1, y1), width = 3, outline = (255, 0, 0))
+                    dr.text((xc, yc), label_name, fill = (255, 0, 0))
+            dst_path = os.path.join(dst_dir_path, "{}_{}.jpg".format(e, b))
+            pil.save(dst_path)
+            print(dst_path)
 
 if __name__ == "__main__":
     data_path = r"/mnt/hdd/dataset/cityscapes"
