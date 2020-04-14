@@ -30,7 +30,7 @@ from jax.experimental import stax
 from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
                                    FanOut, Flatten, GeneralConv, Identity,
                                    MaxPool, Relu, LogSoftmax, Softmax)
-from model_maker import net_maker
+from model.maker.model_maker import net_maker
 
 from dataset.cityscapes import CityScapes
 
@@ -75,7 +75,7 @@ def SampleNetwork(num_classes):
     net.add_layer(Flatten)
     net.add_layer(Dense(num_classes))
     net.add_layer(Softmax, name = "output", is_output = True)
-    return net.make_jax_model()
+    return net.get_jax_model()
     
     return stax.serial(
         Conv(64, (7, 7), (2, 2), 'SAME'),
@@ -122,15 +122,14 @@ def main():
         return jnp.mean(predicted_class == target_class)
 
     def make_batch_getter(batch_size):
-        rng = onp.random.RandomState(0)
-        cityscapes = CityScapes(r"/mnt/hdd/dataset/cityscapes", IMG_H, IMG_W)
+        rng = jax.random.PRNGKey(0)
+        cityscapes = CityScapes(r"/mnt/hdd/dataset/cityscapes", rng, IMG_H, IMG_W)
         gen = cityscapes.make_generator("train",
                                         label_txt_list = ["car", "person"],
-                                        batch_size = batch_size,
-                                        rng_key = rng_key)
+                                        batch_size = batch_size)
         while True:
             images, _ = next(gen)
-            labels = rng.randint(NUM_CLASSES, size=(batch_size, 1))
+            labels = onp.random.randint(NUM_CLASSES, size=(batch_size, 1))
             onehot_labels = labels == jnp.arange(NUM_CLASSES)
             yield images, onehot_labels
 
