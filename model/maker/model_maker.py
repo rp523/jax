@@ -5,19 +5,20 @@ class net_maker():
     
     def __init__(self,
                  prev_model = None):
-        self.__names = []
-        self.__input_names = []
-        self.__is_output = []
-        self.__init_funs = []
-        self.__apply_funs = []
-        if prev_model != None:
+        self.__names = []       # each layer's name
+        self.__input_names = [] # each layer's input layer name
+        self.__is_output = []   # is final output or not
+        self.__init_funs = []   # initialize-functions
+        self.__apply_funs = []  # apply-functions
+
+        if prev_model != None:  # when conncet to previously-defined model
             # fit funs for this class
             init_fun, apply_fun = prev_model.get_jax_model()
             init_funs, apply_funs = [init_fun], [apply_fun]
             # make dummy arrays
             names, input_names, is_output = [None], [None], [False]
             if isinstance(prev_model, net_maker):
-                # previous model is instanced by the same class
+                # previous model is instanced by this class
                 # able to get detailed array info
                 names, input_names, is_output, init_funs, apply_funs = prev_model.get_layer_info()
             self.__names = names
@@ -51,13 +52,17 @@ class net_maker():
     
     def get_jax_model(self):
         n_layers = len(self.__init_funs)
+
+        # initialize-function of whole model
         def init_fun(rng, input_shape):
             params = []
             for init_fun in self.__init_funs:
                 rng, layer_rng = jrandom.split(rng)
-                input_shape, param = init_fun(layer_rng, input_shape)
+                output_shape, param = init_fun(layer_rng, input_shape)
                 params.append(param)
-            return input_shape, params
+            return output_shape, params
+
+        # apply-function of whole model
         def apply_fun(params, inputs, **kwargs):
             input_set_dict = {}
             output_dict = {}
@@ -67,12 +72,12 @@ class net_maker():
             model_inputs = inputs
             
             output = None
-            for l, (fun, param, name, input_name, is_output, rng) in enumerate(zip(self.__apply_funs,
-                                                                            params,
-                                                                            self.__names,
-                                                                            self.__input_names,
-                                                                            self.__is_output,
-                                                                            rngs)):
+            for l, (fun, param, name, input_name, is_output, rng) in enumerate(zip( self.__apply_funs,
+                                                                                    params,
+                                                                                    self.__names,
+                                                                                    self.__input_names,
+                                                                                    self.__is_output,
+                                                                                    rngs)):
                 if l == 0:
                     layer_inputs = model_inputs
                 else:
@@ -90,6 +95,8 @@ class net_maker():
                     assert(name != None)
                     output_dict[name] = output  # for output
             return output_dict
+        
+        # return 2 functions
         return init_fun, apply_fun
 
 
