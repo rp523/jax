@@ -67,14 +67,14 @@ def IdentityBlock(kernel_size, filters):
 def SampleNetwork(num_classes):
     net = net_maker()
     net.add_layer(Conv(64, (7, 7), (2, 2), 'SAME'), name = "first")
-    net.add_layer(BatchNorm(), name = "aaa", input_name = "first", is_output = True)
+    net.add_layer(BatchNorm(), name = "aaa", input_name = "first")
     net.add_layer(Conv(64, (5, 5), (2, 2), 'VALID'))
     net.add_layer(Conv(64, (5, 5), (2, 2), 'VALID'))
     net.add_layer(Conv(64, (5, 5), (2, 2), 'VALID'))
     net.add_layer(Conv(64, (5, 5), (2, 2), 'VALID'))
     net.add_layer(Flatten)
     net.add_layer(Dense(num_classes))
-    net.add_layer(Softmax, name = "output", is_output = True)
+    net.add_layer(Softmax, name = "output")
     return net.get_jax_model()
     
     return stax.serial(
@@ -136,13 +136,12 @@ def main():
     opt_init, opt_update, get_params = optimizers.momentum(0.1, mass=0.9)
     batch_getter = make_batch_getter(BATCH_SIZE)
 
-    # slightly faster than jax-jit
-    @jit
-    def update(i, opt_state, batch):
+    def _update(i, opt_state, batch):
         params = get_params(opt_state)
         loss_val, grad_val = value_and_grad(loss)(params, batch)
         return loss_val, opt_update(i, grad_val, opt_state)
-    
+    update = jit(_update)
+
     opt_state = opt_init(init_params)
     for i in range(NUM_STEPS):
         t0 = time.time()
