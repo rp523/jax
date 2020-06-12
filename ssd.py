@@ -88,12 +88,13 @@ def main():
     update = jit(_update)
 
     opt_state = opt_init(init_params)
+    t0 = time.time()
     for i in range(NUM_STEPS):
-        t0 = time.time()
         batch = next(batch_getter)
         loss_val, opt_state = update(i, opt_state, batch)
-        t1 = time.time()
-        print(i, "{:.1f}ms".format(1000 * (t1 - t0)), loss_val)
+        t = time.time()
+        print(i, "{:.1f}ms".format(1000 * (t - t0)), loss_val)
+        t0 = t
     trained_params = get_params(opt_state)  # list format
 
 if "__main__" == __name__:
