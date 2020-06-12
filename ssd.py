@@ -33,9 +33,9 @@ def StrideBlock(channel1,
     ch1 = channel1
     ch2 = channel2
     k = kernel_size
-    return stax.serial(Conv2WithSkip(ch1, k, 1),
-                       Conv2WithSkip(ch1, k, 1),
-                       Conv(ch2, (k, k), (2, 2), "SAME"), Relu,)
+    return stax.serial( Conv2WithSkip(ch1, k, 1),
+                        Conv2WithSkip(ch1, k, 1),
+                        Conv(ch2, (k, k), (2, 2), "SAME"), Relu,)
 
 def RootResNet18():
     net = net_maker()
@@ -56,9 +56,9 @@ def make_batch_getter(batch_gen, batch_size, img_h, img_w):
 def main():
     rng_key = random.PRNGKey(0)
     
-    BATCH_SIZE = 2
-    IMG_H = 64
-    IMG_W = 128
+    BATCH_SIZE = 8
+    IMG_H = 128
+    IMG_W = 256
     INPUT_SHAPE = (BATCH_SIZE, IMG_H, IMG_W, 3)
     NUM_STEPS = 30
     MODEL_DIR = "model"
@@ -70,9 +70,9 @@ def main():
     
     rng = jax.random.PRNGKey(0)
     cityscapes = CityScapes(r"/mnt/hdd/dataset/cityscapes", rng, IMG_H, IMG_W)
-    batch_gen = cityscapes.make_generator("train",
-                                          label_txt_list = ["car", "person"],
-                                          batch_size = BATCH_SIZE)
+    batch_gen = cityscapes.make_generator(  "train",
+                                            label_txt_list = ["car", "person"],
+                                            batch_size = BATCH_SIZE)
     batch_getter = make_batch_getter(batch_gen, BATCH_SIZE, IMG_H, IMG_W)
 
     def loss(params, batch):

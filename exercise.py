@@ -27,9 +27,9 @@ from jax.config import config
 from jax import jit, grad, random, value_and_grad, device_put, tree_map
 from jax.experimental import optimizers
 from jax.experimental import stax
-from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
-                                   FanOut, Flatten, GeneralConv, Identity,
-                                   MaxPool, Relu, LogSoftmax, Softmax)
+from jax.experimental.stax import ( AvgPool, BatchNorm, Conv, Dense, FanInSum,
+                                    FanOut, Flatten, GeneralConv, Identity,
+                                    MaxPool, Relu, LogSoftmax, Softmax)
 from model.maker.model_maker import net_maker
 
 from dataset.cityscapes import CityScapes

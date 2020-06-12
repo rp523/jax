@@ -70,12 +70,10 @@ class net_maker():
             rngs = jrandom.split(rng, n_layers) if rng is not None else (None,) * n_layers
             for idx, (param, apply_fun, name, rng) in enumerate(zip(params, self.__apply_funs, self.__names, rngs)):
                 if idx > 0:
-                    input_idx = self.__get_input_index(idx)
-                    input_name = self.__names[input_idx]
+                    input_name = self.__input_names[idx]
                     if input_name is None:
                         inputs = output
                     else:
-                        assert(input_name in final_output.keys())
                         inputs = final_output[input_name]
                 output = apply_fun(param, inputs, rng=rng, **kwargs)    # apply
                 if name is not None:
