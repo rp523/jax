@@ -3,11 +3,10 @@ import jax.random as jrandom
 
 class net_maker():
     
-    def __init__(self,
-                 prev_model = None):
+    def __init__(self, prev_model = None):
         self.__names = []       # each layer's name
         self.__input_names = [] # each layer's input layer name
-        self.__is_output = []   # is final output or not
+        # layer process substance
         self.__init_funs = []   # initialize-functions
         self.__apply_funs = []  # apply-functions
 
@@ -23,19 +22,14 @@ class net_maker():
                 names, input_names, is_output, init_funs, apply_funs = prev_model.get_layer_info()
             self.__names = names
             self.__input_names = input_names
-            self.__is_output = is_output
             self.__init_funs = init_funs
             self.__apply_funs = apply_funs
     
     def get_layer_info(self):
-        return self.__names, \
-               self.__input_names, \
-               self.__is_output, \
-               self.__init_funs, \
-               self.__apply_funs
-    
-    def get_all_funs(self):
-               self.__is_output
+        return  self.__names, \
+                self.__input_names, \
+                self.__init_funs, \
+                self.__apply_funs
     
     def add_layer(self, layer,
                         name = None,
