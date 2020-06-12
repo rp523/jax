@@ -9,21 +9,21 @@ from jax import jit, grad, random, value_and_grad, device_put, tree_map
 from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
-                                   FanOut, Flatten, GeneralConv, Identity,
-                                   MaxPool, Relu, LogSoftmax, Softmax)
+                                    FanOut, Flatten, GeneralConv, Identity,
+                                    MaxPool, Relu, LogSoftmax, Softmax)
 from model.maker.model_maker import net_maker
 from dataset.cityscapes import CityScapes
 
-def Conv2WithSkip(channel_size,
-                  kernel_size,
-                  stride):
+def Conv2WithSkip(  channel_size,
+                    kernel_size,
+                    stride,
+                    ):
     ch = channel_size
     k = kernel_size
     s = stride
-    Main = stax.serial(
-                       Conv(ch, (k, k), (s, s), "SAME"), BatchNorm(), Relu,
-                       Conv(ch, (k, k), (s, s), "SAME"), BatchNorm(), Relu,
-                       )
+    Main = stax.serial( Conv(ch, (k, k), (s, s), "SAME"), BatchNorm(), Relu,
+                        Conv(ch, (k, k), (s, s), "SAME"), BatchNorm(), Relu,
+                        )
     return stax.serial(FanOut(2), stax.parallel(Main, Identity), FanInSum, Relu,)
 
 def StrideBlock(channel1,
@@ -39,22 +39,12 @@ def StrideBlock(channel1,
 
 def RootResNet18():
     net = net_maker()
-    # stride = 1
-    net.add_layer(Conv(64, (7, 7), (2, 2), "SAME"))
-    # stride = 2
-    net.add_layer(Identity, name = "f2")
-    net.add_layer(StrideBlock(64, 128, 3))
-    # stride = 4
-    net.add_layer(Identity, name = "f4")
-    net.add_layer(StrideBlock(128, 256, 3))
-    # stride = 8
-    net.add_layer(Identity, name = "f8")
-    net.add_layer(StrideBlock(256, 512, 3))
-    # stride = 16
-    net.add_layer(Identity, name = "f16")
-    net.add_layer(StrideBlock(512, 512, 3))
-    # stride = 32
-    net.add_layer(Identity, name = "f32", is_output = True)
+
+    net.add_layer(Conv(64, (7, 7), (2, 2), "SAME"), name = "f2")    # stride = 2
+    net.add_layer(StrideBlock(64, 128, 3), name = "f4")             # stride = 4
+    net.add_layer(StrideBlock(128, 256, 3), name = "f8")            # stride = 8
+    net.add_layer(StrideBlock(256, 512, 3), name = "f16")           # stride = 16
+    net.add_layer(StrideBlock(512, 512, 3), name = "f32")           # stride = 32
     return net.get_jax_model()
 
 def make_batch_getter(batch_gen, batch_size, img_h, img_w):
@@ -91,13 +81,12 @@ def main():
         y_ = preds["f32"]
         return jnp.sum((y - y_) ** 2)
 
-    # slightly faster than jax-jit
-    @jit
-    def update(i, opt_state, batch):
+    def _update(i, opt_state, batch):
         params = get_params(opt_state)
         loss_val, grad_val = value_and_grad(loss)(params, batch)
         return loss_val, opt_update(i, grad_val, opt_state)
-    
+    update = jit(_update)
+
     opt_state = opt_init(init_params)
     for i in range(NUM_STEPS):
         t0 = time.time()
