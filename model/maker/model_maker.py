@@ -68,9 +68,8 @@ class net_maker():
 
             rng = kwargs.pop('rng', None)
             rngs = jrandom.split(rng, n_layers) if rng is not None else (None,) * n_layers
-            for idx, (param, apply_fun, name, rng) in enumerate(zip(params, self.__apply_funs, self.__names, rngs)):
+            for idx, (param, apply_fun, name, input_name, rng) in enumerate(zip(params, self.__apply_funs, self.__names, self.__input_names, rngs)):
                 if idx > 0:
-                    input_name = self.__input_names[idx]
                     if input_name is None:
                         inputs = output
                     else:
