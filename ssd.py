@@ -1,5 +1,5 @@
 #coding: utf-8
-import numpy as onp
+import numpy as np
 import os, time
 
 import jax
@@ -50,7 +50,7 @@ def RootResNet18():
 def make_batch_getter(batch_gen, batch_size, img_h, img_w):
     while True:
         images, _ = next(batch_gen)
-        labels = onp.random.uniform(size =  (batch_size, img_h//32, img_w//32, 512)) # dummy label
+        labels = np.random.uniform(size =  (batch_size, img_h//32, img_w//32, 512)) # dummy label
         yield images, labels
 
 def main():

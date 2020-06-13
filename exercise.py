@@ -18,7 +18,7 @@ This file uses the stax neural network definition library and the optimizers
 optimization library.
 """
 
-import numpy as onp
+import numpy as np
 import os, time
 
 import jax
@@ -129,7 +129,7 @@ def main():
                                         batch_size = batch_size)
         while True:
             images, _ = next(gen)
-            labels = onp.random.randint(NUM_CLASSES, size=(batch_size, 1))
+            labels = np.random.randint(NUM_CLASSES, size=(batch_size, 1))
             onehot_labels = labels == jnp.arange(NUM_CLASSES)
             yield images, onehot_labels
 
