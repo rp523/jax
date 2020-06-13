@@ -146,10 +146,10 @@ class CityScapes:
                 left_pil = Image.open(left_path)
                 left_pil = left_pil.resize((self.__img_w, self.__img_h))
                 left_arr = np.asarray(left_pil)
-                left_arr = left_arr.reshape((1,
-                                             left_arr.shape[0],
-                                             left_arr.shape[1],
-                                             left_arr.shape[2]))
+                left_arr = left_arr.reshape(   (1,
+                                                left_arr.shape[0],
+                                                left_arr.shape[1],
+                                                left_arr.shape[2]))
                 if images.size == 0:
                     images = left_arr
                 else:
