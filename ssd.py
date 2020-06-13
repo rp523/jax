@@ -39,14 +39,25 @@ def StrideBlock(channel1,
 
 def RootResNet18():
     net = net_maker()
-
     net.add_layer(Conv(64, (7, 7), (2, 2), "SAME"), name = "f2")    # stride = 2
-    net.add_layer(StrideBlock(64, 128, 3), name = "f4")             # stride = 4
-    net.add_layer(StrideBlock(128, 256, 3), name = "f8")            # stride = 8
+    net.add_layer(StrideBlock( 64, 128, 3), name =  "f4")             # stride = 4
+    net.add_layer(StrideBlock(128, 256, 3), name =  "f8")            # stride = 8
     net.add_layer(StrideBlock(256, 512, 3), name = "f16")           # stride = 16
     net.add_layer(StrideBlock(512, 512, 3), name = "f32")           # stride = 32
-    return net.get_jax_model()
+    return net
 
+def SSD(pos_cls_vec, siz_vec, asp_vec):
+    net = net_maker(prev_model = RootResNet18())
+    anchor_num = siz_vec.size * asp_vec.size
+    anchor_out = 4 + (1 + pos_cls_vec.size) # position of rect + classify
+    out_ch = anchor_num * anchor_out
+    net.add_layer(  Conv(out_ch, (3, 3), (1, 1), padding = "SAME"), input_name =  "f2", name =  "a2")
+    net.add_layer(  Conv(out_ch, (3, 3), (1, 1), padding = "SAME"), input_name =  "f4", name =  "a4")
+    net.add_layer(  Conv(out_ch, (3, 3), (1, 1), padding = "SAME"), input_name =  "f8", name =  "a8")
+    net.add_layer(  Conv(out_ch, (3, 3), (1, 1), padding = "SAME"), input_name = "f16", name = "a16")
+    net.add_layer(  Conv(out_ch, (3, 3), (1, 1), padding = "SAME"), input_name = "f32", name = "a32")
+    return net
+    
 def make_batch_getter(batch_gen, batch_size, img_h, img_w):
     while True:
         images, _ = next(batch_gen)
