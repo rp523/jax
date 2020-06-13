@@ -1,5 +1,5 @@
 #coding: utf-8
-import os
+import os, shutil
 from pathlib import Path
 import numpy as np
 from PIL import Image
@@ -113,7 +113,7 @@ class CityScapes:
                 x1 = np.clip(polygons[:,0].max() / (img_w - 1), 0, 1.0)
                 y0 = np.clip(polygons[:,1].min() / (img_h - 1), 0, 1.0)
                 y1 = np.clip(polygons[:,1].max() / (img_h - 1), 0, 1.0)
-                rect = np.array([x0, x1, y0, y1]).reshape(1, 4)
+                rect = np.array([y0, y1, x0, x1]).reshape(1, 4)
                 if not obj_label in label_dict.keys():
                     label_dict[obj_label] = rect
                 else:
@@ -158,14 +158,14 @@ class CityScapes:
             
             yield images.astype(np.float32), labels
             
-def visualize(data_path, dst_dir_path):
+def visualize(data_path, dst_dir_path, color):
     from PIL import ImageDraw, ImageFont
     rng_key = jax.random.PRNGKey(0)
     cityscapes = CityScapes(data_path, rng_key, 256, 512)
     epoch_num = 10
-    batch_size = 1
+    batch_size = 2
     gen = cityscapes.make_generator("train",
-                                    label_txt_list = ["car", "person"],
+                                    label_txt_list = list(color.keys()),
                                     batch_size = batch_size)
     for e in range(epoch_num):
         images, labels = next(gen)
@@ -176,10 +176,10 @@ def visualize(data_path, dst_dir_path):
             dr = ImageDraw.Draw(pil)
             for label_name, rect_arr in label_dict.items():
                 for rect in rect_arr:
-                    x0 = rect[0]
-                    x1 = rect[1]
-                    y0 = rect[2]
-                    y1 = rect[3]
+                    y0 = rect[0]
+                    y1 = rect[1]
+                    x0 = rect[2]
+                    x1 = rect[3]
                     xc = (x0 + x1) // 2
                     yc = (y0 + y1) // 2
                     x0 *= (w - 1)
@@ -188,14 +188,19 @@ def visualize(data_path, dst_dir_path):
                     y0 *= (h - 1)
                     y1 *= (h - 1)
                     yc *= (h - 1)
-                    dr.rectangle((x0, y0, x1, y1), width = 3, outline = (255, 0, 0))
-                    dr.text((xc, yc), label_name, fill = (255, 0, 0))
+                    dr.rectangle((x0, y0, x1, y1), width = 3, outline = color[label_name])
+                    dr.text((xc, yc), label_name, fill = color[label_name])
             dst_path = os.path.join(dst_dir_path, "{}_{}.jpg".format(e, b))
             pil.save(dst_path)
             print(dst_path)
 
 if __name__ == "__main__":
     data_path = r"/mnt/hdd/dataset/cityscapes"
-    dst_dir_path = r"."
-    visualize(data_path, dst_dir_path)
+    dst_dir_path = r"visualize"
+    
+    if os.path.exists(dst_dir_path):
+        shutil.rmtree(dst_dir_path)
+    os.makedirs(dst_dir_path)
+
+    visualize(data_path, dst_dir_path, color = {"car":(255,0,0), "person":(0,255,0)})
     
