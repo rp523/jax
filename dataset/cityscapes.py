@@ -124,6 +124,12 @@ class CityScapes:
                     label_dict[obj_label] = np.append(label_dict[obj_label], rect, axis = 0)
         return label_dict
     
+    def epoch_loop(self, train_type, batch_size):
+        train_type_dict = self.__all[train_type]
+        key_list = list(train_type_dict.keys())
+        n_data = len(key_list)
+        return n_data // batch_size
+
     def make_generator(self, train_type, label_txt_list, batch_size):
         train_type_dict = self.__all[train_type]
         key_list = list(train_type_dict.keys())

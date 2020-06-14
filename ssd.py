@@ -13,6 +13,7 @@ from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
                                     MaxPool, Relu, LogSoftmax, Softmax)
 from model.maker.model_maker import net_maker
 from dataset.cityscapes import CityScapes
+from checkpoint import CheckPoint
 
 def Conv2WithSkip(  channel_size,
                     kernel_size,
@@ -59,9 +60,9 @@ def SSD(pos_classes, siz_vec, asp_vec):
     return net
 
 def main():
-    BATCH_SIZE = 2
+    BATCH_SIZE = 16
     SEED = 0
-    LOOP_NUM = 100
+    EPOCH_NUM = 30
 
     batch_size = BATCH_SIZE
     rng = jax.random.PRNGKey(SEED)
@@ -79,10 +80,11 @@ def main():
 
     rng1, rng = jax.random.split(rng)
     _, init_params = init_fun(rng1, (batch_size, img_h, img_w, 3))
-    opt_init, opt_update, get_params = optimizers.adam(1E-4)
+    opt_init, opt_update, get_params = optimizers.adam(1E-5)
     
     rng1, rng = jax.random.split(rng)
-    batch_getter = make_batch_getter(rng1, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w)
+    dataset = CityScapes(r"/mnt/hdd/dataset/cityscapes", rng, img_h, img_w)
+    batch_getter = make_batch_getter(dataset, rng1, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w)
 
     opt_state = opt_init(init_params)
 
@@ -112,18 +114,26 @@ def main():
         return out
 
     @jax.jit
-    def update(i, opt_state, x, y):
+    def update(cnt, opt_state, x, y):
         params = get_params(opt_state)
         loss_val, grad_val = value_and_grad(loss)(params, x, y)
-        return loss_val, opt_update(i, grad_val, opt_state)
+        return loss_val, opt_update(cnt, grad_val, opt_state)
 
+    epoch_loop = dataset.epoch_loop("train", batch_size)
+    cnt = 0
     t0 = time.time()
-    for i in range(LOOP_NUM):
-        x, y = next(batch_getter)
-        loss_val, opt_state = update(i, opt_state, x, y)
-        t = time.time()
-        print(i, "{:.1f}ms".format(1000 * (t - t0)), loss_val)
-        t0 = t
+    for e in range(EPOCH_NUM):
+        for l in range(epoch_loop):
+            x, y = next(batch_getter)
+            loss_val, opt_state = update(cnt, opt_state, x, y)
+            cnt += 1
+            t = time.time()
+            print("epoch=[{}/{}]".format(e + 1, EPOCH_NUM), "loop=[{}/{}]".format(l + 1, epoch_loop), "{:.1f}ms".format(1000 * (t - t0)), loss_val)
+            t0 = t
+        dst_dir = os.path.join("cp", "epoch{}".format(e))
+        if not os.path.exists(dst_dir):
+            os.makedirs(dst_dir)
+        CheckPoint.save_params(get_params(opt_state), dst_dir)
     trained_params = get_params(opt_state)  # list format
     return trained_params
     
@@ -218,8 +228,7 @@ def calc_iou(base_y0, base_y1, base_x0, base_x1, base_h, base_w,
     
     return iou
 
-def make_batch_getter(rng, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w):
-    dataset = CityScapes(r"/mnt/hdd/dataset/cityscapes", rng, img_h, img_w)
+def make_batch_getter(dataset, rng, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w):
     batch_gen = dataset.make_generator( "train",
                                         label_txt_list = pos_classes,
                                         batch_size = batch_size)
