@@ -2,3 +2,4 @@ model/maker/__pycache__/model_maker.cpython-37.pyc
 model/maker/__pycache__/__init__.cpython-37.pyc
 model/__pycache__/__init__.cpython-37.pyc
 dataset/__pycache__/cityscapes.cpython-37.pyc
+__pycache__/checkpoint.cpython-37.pyc
