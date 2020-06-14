@@ -79,7 +79,7 @@ def main():
 
     rng1, rng = jax.random.split(rng)
     _, init_params = init_fun(rng1, (batch_size, img_h, img_w, 3))
-    opt_init, opt_update, get_params = optimizers.adam(1E-3)
+    opt_init, opt_update, get_params = optimizers.adam(1E-4)
     
     rng1, rng = jax.random.split(rng)
     batch_getter = make_batch_getter(rng1, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w)
@@ -100,12 +100,18 @@ def main():
             pred_pos, pred_cls_logit = jnp.split(pred, [4], axis = -1)
             pos, pos_valid, cls, cls_valid = y[key]
             pos_diff = pred_pos - pos
-            out += POS_ALPHA * smooth_l1(pos_diff)[pos_valid].sum()
+
+            b, h, w, a = pos_valid.shape
+            pos_valid = pos_valid.reshape(b, h, w, a, 1)
+            out += (POS_ALPHA * smooth_l1(pos_diff) * pos_valid).sum()
+
             pred_cls = jax.nn.softmax(pred_cls_logit)
-            out += (- cls * jnp.log(pred_cls + 1E-10))[cls_valid].sum()
+            b, h, w, a = cls_valid.shape
+            cls_valid = cls_valid.reshape(b, h, w, a, 1)
+            out += (- cls * jnp.log(pred_cls + 1E-10) * cls_valid).sum()
         return out
 
-    #@jax.jit
+    @jax.jit
     def update(i, opt_state, x, y):
         params = get_params(opt_state)
         loss_val, grad_val = value_and_grad(loss)(params, x, y)
