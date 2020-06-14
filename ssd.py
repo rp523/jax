@@ -130,7 +130,7 @@ def main():
             t = time.time()
             print("epoch=[{}/{}]".format(e + 1, EPOCH_NUM), "loop=[{}/{}]".format(l + 1, epoch_loop), "{:.1f}ms".format(1000 * (t - t0)), loss_val)
             t0 = t
-        dst_dir = os.path.join("cp", "epoch{}".format(e))
+        dst_dir = os.path.join("../ssd_checkpoint", "epoch{}".format(e))
         if not os.path.exists(dst_dir):
             os.makedirs(dst_dir)
         CheckPoint.save_params(get_params(opt_state), dst_dir)
