@@ -62,7 +62,7 @@ def SSD(pos_classes, siz_vec, asp_vec):
 def main():
     BATCH_SIZE = 16
     SEED = 0
-    EPOCH_NUM = 30
+    EPOCH_NUM = 500
 
     batch_size = BATCH_SIZE
     rng = jax.random.PRNGKey(SEED)
@@ -80,7 +80,7 @@ def main():
 
     rng1, rng = jax.random.split(rng)
     _, init_params = init_fun(rng1, (batch_size, img_h, img_w, 3))
-    opt_init, opt_update, get_params = optimizers.adam(1E-5)
+    opt_init, opt_update, get_params = optimizers.adam(1E-4)
     
     rng1, rng = jax.random.split(rng)
     dataset = CityScapes(r"/mnt/hdd/dataset/cityscapes", rng, img_h, img_w)
@@ -111,6 +111,12 @@ def main():
             b, h, w, a = cls_valid.shape
             cls_valid = cls_valid.reshape(b, h, w, a, 1)
             out += (- cls * jnp.log(pred_cls + 1E-10) * cls_valid).sum()
+        # batch average
+        out /= x.shape[0]
+
+        #weight decay
+        out += 1E-4 * net_maker.weight_decay(params)
+
         return out
 
     @jax.jit

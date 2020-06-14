@@ -41,6 +41,16 @@ class net_maker():
             assert(input_name in self.__names)
             return self.__names.index(input_name)
     
+    def weight_decay(params):
+        ret = 0.0
+        if isinstance(params, list) or isinstance(params, tuple):
+            params = list(params)
+            for param in params:
+                ret += net_maker.weight_decay(param)
+        else:
+            ret += (params ** 2).sum()
+        return ret
+
     def get_jax_model(self):
         n_layers = len(self.__init_funs)
         input_shapes = [input]
