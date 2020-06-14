@@ -61,47 +61,33 @@ def SSD(pos_classes, siz_vec, asp_vec):
 def main():
     BATCH_SIZE = 2
     SEED = 0
-    t = Trainer(BATCH_SIZE, SEED)
-    t.train_loop(10)
+    LOOP_NUM = 100
+
+    batch_size = BATCH_SIZE
+    rng = jax.random.PRNGKey(SEED)
+    ANCHOR_SIZ_NUM = 3
+    siz_vec = 2 ** (np.arange(ANCHOR_SIZ_NUM) / ANCHOR_SIZ_NUM)
+
+    ANCHOR_ASP_MAX = 2.0
+    ANCHOR_ASP_NUM = 3
+    asp_vec = ANCHOR_ASP_MAX ** np.linspace(-1, 1, ANCHOR_ASP_NUM)
+    pos_classes = ["car", "person"]
+    img_h = 128
+    img_w = 256
+    batch_size = batch_size
+    init_fun, apply_fun = SSD(pos_classes, siz_vec, asp_vec).get_jax_model()
+
+    rng1, rng = jax.random.split(rng)
+    _, init_params = init_fun(rng1, (batch_size, img_h, img_w, 3))
+    opt_init, opt_update, get_params = optimizers.adam(1E-3)
     
-class Trainer:
-    def __init__(self, batch_size, seed):
-        self.__rng = jax.random.PRNGKey(seed)
-        ANCHOR_SIZ_NUM = 3
-        self.__siz_vec = 2 ** (np.arange(ANCHOR_SIZ_NUM) / ANCHOR_SIZ_NUM)
+    rng1, rng = jax.random.split(rng)
+    batch_getter = make_batch_getter(rng1, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w)
 
-        ANCHOR_ASP_MAX = 2.0
-        ANCHOR_ASP_NUM = 3
-        self.__asp_vec = ANCHOR_ASP_MAX ** np.linspace(-1, 1, ANCHOR_ASP_NUM)
-        self.__pos_classes = ["car", "person"]
-        self.__img_h = 128
-        self.__img_w = 256
-        self.__batch_size = batch_size
-        init_fun, self.__apply_fun = SSD(self.__pos_classes, self.__siz_vec, self.__asp_vec).get_jax_model()
+    opt_state = opt_init(init_params)
 
-        rng, self.__rng = jax.random.split(self.__rng)
-        _, init_params = init_fun(rng, (self.__batch_size, self.__img_h, self.__img_w, 3))
-        opt_init, self.__opt_update, self.__get_params = optimizers.adam(1E-3)
-        
-        rng, self.__rng = jax.random.split(self.__rng)
-        self.__batch_getter = self.__make_batch_getter(rng)
-
-        self.__opt_state = opt_init(init_params)
-    
-    def train_loop(self, loop):
-        t0 = time.time()
-        update = (self.update)
-        for i in range(loop):
-            x, y = next(self.__batch_getter)
-            loss_val, self.__opt_state = update(i, self.__opt_state, x, y)
-            t = time.time()
-            print(i, "{:.1f}ms".format(1000 * (t - t0)), loss_val)
-            t0 = t
-        trained_params = self.__get_params(self.__opt_state)  # list format
-        return trained_params
-
-    def loss(self, params, x, y):
-        preds = self.__apply_fun(params, x)
+    def loss(params, x, y):
+        preds = apply_fun(params, x)
         POS_ALPHA = 1.0
         def smooth_l1(x):
             return (0.5 * x ** 2) * (jnp.abs(x) < 1) + (jnp.abs(x) - 0.5) * (jnp.abs(x) >= 1)
@@ -110,7 +96,7 @@ class Trainer:
             key = "a{}".format(stride)
             pred = preds[key]
             b, h, w, ch = pred.shape
-            pred = pred.reshape(b, h, w, self.__siz_vec.size * self.__asp_vec.size, -1)
+            pred = pred.reshape(b, h, w, siz_vec.size * asp_vec.size, -1)
             pred_pos, pred_cls_logit = jnp.split(pred, [4], axis = -1)
             pos, pos_valid, cls, cls_valid = y[key]
             pos_diff = pred_pos - pos
@@ -120,113 +106,123 @@ class Trainer:
         return out
 
     #@jax.jit
-    def update(self, i, opt_state, x, y):
-        params = self.__get_params(opt_state)
-        loss_val, grad_val = value_and_grad(self.loss)(params, x, y)
-        return loss_val, self.__opt_update(i, grad_val, opt_state)
+    def update(i, opt_state, x, y):
+        params = get_params(opt_state)
+        loss_val, grad_val = value_and_grad(loss)(params, x, y)
+        return loss_val, opt_update(i, grad_val, opt_state)
 
-    def __arrange_annot(self, batched_labels, feat_h, feat_w):
-        POS_IOU_TH = 0.5
-        NEG_IOU_TH = 0.4
-        batch_size = len(batched_labels)
-        all_iou = np.zeros((batch_size, self.__siz_vec.size, self.__asp_vec.size, feat_h, feat_w), dtype = np.float32)
-        out_yc  = np.zeros((batch_size, self.__siz_vec.size, self.__asp_vec.size, feat_h, feat_w), dtype = np.float32)
-        out_xc  = np.zeros((batch_size, self.__siz_vec.size, self.__asp_vec.size, feat_h, feat_w), dtype = np.float32)
-        out_h   = np.zeros((batch_size, self.__siz_vec.size, self.__asp_vec.size, feat_h, feat_w), dtype = np.float32)
-        out_w   = np.zeros((batch_size, self.__siz_vec.size, self.__asp_vec.size, feat_h, feat_w), dtype = np.float32)
-        out_cls = np.zeros((batch_size, self.__siz_vec.size, self.__asp_vec.size, feat_h, feat_w), dtype = np.int32)
-
-        base_yc = (np.arange(feat_h) + 0.5) / feat_h
-        base_yc = np.tile(base_yc.reshape(-1, 1), (1, feat_w))
-        base_xc = (np.arange(feat_w) + 0.5) / feat_w
-        base_xc = np.tile(base_xc.reshape(1, -1), (feat_h, 1))
-
-        for b, label in enumerate(batched_labels):
-            for label_name, rects in label.items():
-                for rect in rects:
-                    yc = rect[0]
-                    xc = rect[1]
-                    h  = rect[2]
-                    w  = rect[3]
-
-                    y0 = yc - h / 2
-                    y1 = yc + h / 2
-                    x0 = xc - w / 2
-                    x1 = xc + w / 2
-
-                    for s, siz in enumerate(self.__siz_vec):
-                        for a, asp in enumerate(self.__asp_vec):
-                            base_h = (1.0 / feat_h) * siz * (asp ** (-0.5))
-                            base_w = (1.0 / feat_w) * siz * (asp ** ( 0.5))
-
-                            base_y0 = base_yc - base_h / 2
-                            base_y1 = base_yc + base_h / 2
-                            base_x0 = base_xc - base_w / 2
-                            base_x1 = base_xc + base_w / 2
-
-                            iou = self.__calc_iou(  base_y0, base_y1, base_x0, base_x1, base_h, base_w,
-                                                    y0, y1, x0, x1, h, w)
-                            
-                            update_feat_idx = (iou > all_iou[b, s, a])
-                            if update_feat_idx.any():
-                                out_yc[ b, s, a, update_feat_idx] = ((yc - base_yc) / base_h)[update_feat_idx]
-                                out_xc[ b, s, a, update_feat_idx] = ((xc - base_xc) / base_w)[update_feat_idx]
-                                out_h[  b, s, a, update_feat_idx] = np.log(h / base_h)
-                                out_w[  b, s, a, update_feat_idx] = np.log(w / base_w)
-                                out_cls[b, s, a, update_feat_idx] = 1 + self.__pos_classes.index(label_name)
-                                all_iou[b, s, a, update_feat_idx] = iou[update_feat_idx]
-
-        out_cls[all_iou < NEG_IOU_TH] = 0
-        # reshape
-        all_iou = all_iou.transpose(0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, self.__siz_vec.size * self.__asp_vec.size)
-        out_yc  = out_yc.transpose( 0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, self.__siz_vec.size * self.__asp_vec.size, 1)
-        out_xc  = out_xc.transpose( 0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, self.__siz_vec.size * self.__asp_vec.size, 1)
-        out_h   = out_h.transpose(  0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, self.__siz_vec.size * self.__asp_vec.size, 1)
-        out_w   = out_w.transpose(  0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, self.__siz_vec.size * self.__asp_vec.size, 1)
-        out_cls = out_cls.transpose(0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, self.__siz_vec.size * self.__asp_vec.size)
-
-        out_pos = np.append(np.append(out_yc, out_xc, axis = -1),
-                            np.append(out_h , out_w , axis = -1),
-                            axis = -1)
-        out_cls = np.eye(1 + len(self.__pos_classes))[out_cls]
-        pos_valid = (POS_IOU_TH <= all_iou)
-        cls_valid = np.logical_or(all_iou < NEG_IOU_TH, POS_IOU_TH <= all_iou)
-
-        return out_pos, pos_valid, out_cls, cls_valid
+    t0 = time.time()
+    for i in range(LOOP_NUM):
+        x, y = next(batch_getter)
+        loss_val, opt_state = update(i, opt_state, x, y)
+        t = time.time()
+        print(i, "{:.1f}ms".format(1000 * (t - t0)), loss_val)
+        t0 = t
+    trained_params = get_params(opt_state)  # list format
+    return trained_params
     
-    def __calc_iou(self, base_y0, base_y1, base_x0, base_x1, base_h, base_w,
-                    y0, y1, x0, x1, h, w):
-        feat_h, feat_w = base_y0.shape
-        overlap = np.logical_and(   np.logical_and(base_y0 <= y1, y0 <= base_y1),
-                                    np.logical_and(base_x0 <= x1, x0 <= base_x1))
-        and_y0 = np.maximum(base_y0, np.ones((feat_h, feat_w)) * y0)
-        and_y1 = np.minimum(base_y1, np.ones((feat_h, feat_w)) * y1)
-        and_x0 = np.maximum(base_x0, np.ones((feat_h, feat_w)) * x0)
-        and_x1 = np.minimum(base_x1, np.ones((feat_h, feat_w)) * x1)
-        and_h  = and_y1 - and_y0
-        and_w  = and_x1 - and_x0
-        and_s  = and_h  * and_w
+def arrange_annot(batched_labels, pos_classes, siz_vec, asp_vec, feat_h, feat_w):
+    POS_IOU_TH = 0.5
+    NEG_IOU_TH = 0.4
+    batch_size = len(batched_labels)
+    all_iou = np.zeros((batch_size, siz_vec.size, asp_vec.size, feat_h, feat_w), dtype = np.float32)
+    out_yc  = np.zeros((batch_size, siz_vec.size, asp_vec.size, feat_h, feat_w), dtype = np.float32)
+    out_xc  = np.zeros((batch_size, siz_vec.size, asp_vec.size, feat_h, feat_w), dtype = np.float32)
+    out_h   = np.zeros((batch_size, siz_vec.size, asp_vec.size, feat_h, feat_w), dtype = np.float32)
+    out_w   = np.zeros((batch_size, siz_vec.size, asp_vec.size, feat_h, feat_w), dtype = np.float32)
+    out_cls = np.zeros((batch_size, siz_vec.size, asp_vec.size, feat_h, feat_w), dtype = np.int32)
 
-        base_s = base_h * base_w
-        s      = h * w
-        or_s   = base_s + s - and_s
-        
-        iou = np.zeros((feat_h, feat_w), dtype = np.float32)
-        iou[overlap] = (and_s / or_s)[overlap]
-        
-        return iou
+    base_yc = (np.arange(feat_h) + 0.5) / feat_h
+    base_yc = np.tile(base_yc.reshape(-1, 1), (1, feat_w))
+    base_xc = (np.arange(feat_w) + 0.5) / feat_w
+    base_xc = np.tile(base_xc.reshape(1, -1), (feat_h, 1))
 
-    def __make_batch_getter(self, rng):
-        dataset = CityScapes(r"/mnt/hdd/dataset/cityscapes", rng, self.__img_h, self.__img_w)
-        batch_gen = dataset.make_generator( "train",
-                                            label_txt_list = self.__pos_classes,
-                                            batch_size = self.__batch_size)
-        while True:
-            images, batched_labels = next(batch_gen)
-            labels = {}
-            for stride in [2, 4, 8, 16, 32]:
-                labels["a{}".format(stride)] = self.__arrange_annot(batched_labels, self.__img_h // stride, self.__img_w // stride)
-            yield images, labels
+    for b, label in enumerate(batched_labels):
+        for label_name, rects in label.items():
+            for rect in rects:
+                yc = rect[0]
+                xc = rect[1]
+                h  = rect[2]
+                w  = rect[3]
+
+                y0 = yc - h / 2
+                y1 = yc + h / 2
+                x0 = xc - w / 2
+                x1 = xc + w / 2
+
+                for s, siz in enumerate(siz_vec):
+                    for a, asp in enumerate(asp_vec):
+                        base_h = (1.0 / feat_h) * siz * (asp ** (-0.5))
+                        base_w = (1.0 / feat_w) * siz * (asp ** ( 0.5))
+
+                        base_y0 = base_yc - base_h / 2
+                        base_y1 = base_yc + base_h / 2
+                        base_x0 = base_xc - base_w / 2
+                        base_x1 = base_xc + base_w / 2
+
+                        iou = calc_iou(  base_y0, base_y1, base_x0, base_x1, base_h, base_w,
+                                                y0, y1, x0, x1, h, w)
+                        
+                        update_feat_idx = (iou > all_iou[b, s, a])
+                        if update_feat_idx.any():
+                            out_yc[ b, s, a, update_feat_idx] = ((yc - base_yc) / base_h)[update_feat_idx]
+                            out_xc[ b, s, a, update_feat_idx] = ((xc - base_xc) / base_w)[update_feat_idx]
+                            out_h[  b, s, a, update_feat_idx] = np.log(h / base_h)
+                            out_w[  b, s, a, update_feat_idx] = np.log(w / base_w)
+                            out_cls[b, s, a, update_feat_idx] = 1 + pos_classes.index(label_name)
+                            all_iou[b, s, a, update_feat_idx] = iou[update_feat_idx]
+
+    out_cls[all_iou < NEG_IOU_TH] = 0
+    # reshape
+    all_iou = all_iou.transpose(0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size)
+    out_yc  = out_yc.transpose( 0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1)
+    out_xc  = out_xc.transpose( 0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1)
+    out_h   = out_h.transpose(  0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1)
+    out_w   = out_w.transpose(  0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1)
+    out_cls = out_cls.transpose(0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size)
+
+    out_pos = np.append(np.append(out_yc, out_xc, axis = -1),
+                        np.append(out_h , out_w , axis = -1),
+                        axis = -1)
+    out_cls = np.eye(1 + len(pos_classes))[out_cls]
+    pos_valid = (POS_IOU_TH <= all_iou)
+    cls_valid = np.logical_or(all_iou < NEG_IOU_TH, POS_IOU_TH <= all_iou)
+
+    return out_pos, pos_valid, out_cls, cls_valid
+
+def calc_iou(base_y0, base_y1, base_x0, base_x1, base_h, base_w,
+                y0, y1, x0, x1, h, w):
+    feat_h, feat_w = base_y0.shape
+    overlap = np.logical_and(   np.logical_and(base_y0 <= y1, y0 <= base_y1),
+                                np.logical_and(base_x0 <= x1, x0 <= base_x1))
+    and_y0 = np.maximum(base_y0, np.ones((feat_h, feat_w)) * y0)
+    and_y1 = np.minimum(base_y1, np.ones((feat_h, feat_w)) * y1)
+    and_x0 = np.maximum(base_x0, np.ones((feat_h, feat_w)) * x0)
+    and_x1 = np.minimum(base_x1, np.ones((feat_h, feat_w)) * x1)
+    and_h  = and_y1 - and_y0
+    and_w  = and_x1 - and_x0
+    and_s  = and_h  * and_w
+
+    base_s = base_h * base_w
+    s      = h * w
+    or_s   = base_s + s - and_s
+    
+    iou = np.zeros((feat_h, feat_w), dtype = np.float32)
+    iou[overlap] = (and_s / or_s)[overlap]
+    
+    return iou
+
+def make_batch_getter(rng, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w):
+    dataset = CityScapes(r"/mnt/hdd/dataset/cityscapes", rng, img_h, img_w)
+    batch_gen = dataset.make_generator( "train",
+                                        label_txt_list = pos_classes,
+                                        batch_size = batch_size)
+    while True:
+        images, batched_labels = next(batch_gen)
+        labels = {}
+        for stride in [2, 4, 8, 16, 32]:
+            labels["a{}".format(stride)] = arrange_annot(batched_labels, pos_classes, siz_vec, asp_vec, img_h // stride, img_w // stride)
+        yield images, labels
 
 if "__main__" == __name__:
     main()
