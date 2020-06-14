@@ -113,7 +113,11 @@ class CityScapes:
                 x1 = np.clip(polygons[:,0].max() / (img_w - 1), 0, 1.0)
                 y0 = np.clip(polygons[:,1].min() / (img_h - 1), 0, 1.0)
                 y1 = np.clip(polygons[:,1].max() / (img_h - 1), 0, 1.0)
-                rect = np.array([y0, y1, x0, x1]).reshape(1, 4)
+                yc = (y0 + y1) / 2
+                xc = (x0 + x1) / 2
+                h  = y1 - y0
+                w  = x1 - x0
+                rect = np.array([yc, xc, h, w]).reshape(1, 4)
                 if not obj_label in label_dict.keys():
                     label_dict[obj_label] = rect
                 else:
@@ -172,22 +176,26 @@ def visualize(data_path, dst_dir_path, color):
         for b in range(batch_size):
             left_arr, label_dict = images[b], labels[b]
             pil = Image.fromarray(left_arr.astype(np.uint8))
-            w, h = pil.size
+            img_w, img_h = pil.size
             dr = ImageDraw.Draw(pil)
             for label_name, rect_arr in label_dict.items():
                 for rect in rect_arr:
-                    y0 = rect[0]
-                    y1 = rect[1]
-                    x0 = rect[2]
-                    x1 = rect[3]
-                    xc = (x0 + x1) // 2
-                    yc = (y0 + y1) // 2
-                    x0 *= (w - 1)
-                    x1 *= (w - 1)
-                    xc *= (w - 1)
-                    y0 *= (h - 1)
-                    y1 *= (h - 1)
-                    yc *= (h - 1)
+                    yc = rect[0]
+                    xc = rect[1]
+                    h  = rect[2]
+                    w  = rect[3]
+
+                    y0 = yc - h / 2
+                    y1 = yc + h / 2
+                    x0 = xc - w / 2
+                    x1 = xc + w / 2
+                    
+                    x0 *= (img_w - 1)
+                    x1 *= (img_w - 1)
+                    xc *= (img_w - 1)
+                    y0 *= (img_h - 1)
+                    y1 *= (img_h - 1)
+                    yc *= (img_h - 1)
                     dr.rectangle((x0, y0, x1, y1), width = 3, outline = color[label_name])
                     dr.text((xc, yc), label_name, fill = color[label_name])
             dst_path = os.path.join(dst_dir_path, "{}_{}.jpg".format(e, b))
