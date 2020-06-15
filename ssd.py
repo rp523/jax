@@ -91,6 +91,7 @@ def main():
     def loss(params, x, y):
         preds = apply_fun(params, x)
         POS_ALPHA = 1.0
+        FOCAL_GAMMA = 2.0
         def smooth_l1(x):
             return (0.5 * x ** 2) * (jnp.abs(x) < 1) + (jnp.abs(x) - 0.5) * (jnp.abs(x) >= 1)
         out = 0.0
@@ -110,7 +111,7 @@ def main():
             pred_cls = jax.nn.softmax(pred_cls_logit)
             b, h, w, a = cls_valid.shape
             cls_valid = cls_valid.reshape(b, h, w, a, 1)
-            out += (- cls * jnp.log(pred_cls + 1E-10) * cls_valid).sum()
+            out += (- cls * ((1.0 - pred_cls) ** FOCAL_GAMMA) * jnp.log(pred_cls + 1E-10) * cls_valid).sum()
         # batch average
         out /= x.shape[0]
 
