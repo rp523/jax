@@ -143,7 +143,41 @@ def main():
         CheckPoint.save_params(get_params(opt_state), dst_dir)
     trained_params = get_params(opt_state)  # list format
     return trained_params
-    
+
+def feat2rects(feat, pos_classes, siz_vec, asp_vec, prob_th):
+    feat = np.array(feat)
+    batch, feat_h, feat_w, anchor_num, ch = feat.shape
+    assert(anchor_num == siz_vec.size * asp_vec.size)
+    assert(ch == (4 + (1 + len(pos_classes)))
+    for b in range(batch):
+        feat_img = feat[b].reshape(feat_h, feat_w, siz_vec.size, asp_vec.size, 4 + (1 + len(pos_classes))
+        pos_feat, cls_feat = np.split(feat_img, [4], axis = -1)
+        cls_feat = cls_feat[:,:,:,:,1:] # remove negative probability
+        cls_prob = np.max(cls_feat, axis = -1)
+        cls_idx  = np.argmax(cls_feat, axis = -1)
+
+        base_h = 1.0 / feat_h
+        base_w = 1.0 / feat_w
+        for h in range(feat_h):
+            yc = (h + 0.5) * base_h
+            for w in range(feat_w):
+                xc = (w + 0.5) * base_w
+                for s, siz in enumerate(siz_vec):
+                    for a, asp in enumerate(asp_vec):
+                        prob = cls_prob[b, h, w, s, a]
+                        if prob > prob_th:
+                            pyc, pxc, ph, pw = pos_feat[b, h, w, s, a]
+                            rect_h = base_h * siz * (asp ** -0.5) * np.exp()
+                            rect_w = base_w * siz * (asp **  0.5)
+                            rect_yc = yc + base_h * 
+
+
+        det_pos = pos_feat[is_valid_det]
+        det_cls = cls_idx[is_valid_det]
+        det_prob = cls_prob[is_valid_det]
+        det_siz_idx = 
+
+
 def arrange_annot(batched_labels, pos_classes, siz_vec, asp_vec, feat_h, feat_w):
     POS_IOU_TH = 0.5
     NEG_IOU_TH = 0.4
