@@ -80,13 +80,11 @@ def main():
 
     rng1, rng = jax.random.split(rng)
     _, init_params = init_fun(rng1, (batch_size, img_h, img_w, 3))
-    opt_init, opt_update, get_params = optimizers.adam(1E-4)
+    opt_init, opt_update, get_params = optimizers.adam(1E-5)
     
     rng1, rng = jax.random.split(rng)
     dataset = CityScapes(r"/mnt/hdd/dataset/cityscapes", rng, img_h, img_w)
     batch_getter = make_batch_getter(dataset, rng1, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w)
-
-    opt_state = opt_init(init_params)
 
     def loss(params, x, y):
         preds = apply_fun(params, x)
@@ -126,6 +124,11 @@ def main():
         loss_val, grad_val = value_and_grad(loss)(params, x, y)
         return loss_val, opt_update(cnt, grad_val, opt_state)
 
+    src_dir = os.path.join("../ssd_checkpoint", "epoch{}".format(0))
+    if os.path.exists(src_dir):
+        init_params = CheckPoint.load_params(init_params, src_dir)
+
+    opt_state = opt_init(init_params)
     epoch_loop = dataset.epoch_loop("train", batch_size)
     cnt = 0
     t0 = time.time()
@@ -137,7 +140,7 @@ def main():
             t = time.time()
             print("epoch=[{}/{}]".format(e + 1, EPOCH_NUM), "loop=[{}/{}]".format(l + 1, epoch_loop), "{:.1f}ms".format(1000 * (t - t0)), loss_val)
             t0 = t
-        dst_dir = os.path.join("../ssd_checkpoint", "epoch{}".format(e))
+        dst_dir = os.path.join("../ssd_checkpoint", "epoch{}".format(e + 1))
         if not os.path.exists(dst_dir):
             os.makedirs(dst_dir)
         CheckPoint.save_params(get_params(opt_state), dst_dir)
