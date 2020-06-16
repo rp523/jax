@@ -129,16 +129,16 @@ def main():
         init_params = CheckPoint.load_params(init_params, src_dir)
 
     opt_state = opt_init(init_params)
-    epoch_loop = dataset.epoch_loop("train", batch_size)
+    itrnum_in_epoch = dataset.itrnum_in_epoch("train", batch_size)
     cnt = 0
     t0 = time.time()
     for e in range(EPOCH_NUM):
-        for l in range(epoch_loop):
+        for l in range(itrnum_in_epoch):
             x, y = next(batch_getter)
             loss_val, opt_state = update(cnt, opt_state, x, y)
             cnt += 1
             t = time.time()
-            print("epoch=[{}/{}]".format(e + 1, EPOCH_NUM), "loop=[{}/{}]".format(l + 1, epoch_loop), "{:.1f}ms".format(1000 * (t - t0)), loss_val)
+            print("epoch=[{}/{}]".format(e + 1, EPOCH_NUM), "iter=[{}/{}]".format(l + 1, itrnum_in_epoch), "{:.1f}ms".format(1000 * (t - t0)), loss_val)
             t0 = t
         dst_dir = os.path.join("../ssd_checkpoint", "epoch{}".format(e + 1))
         if not os.path.exists(dst_dir):
@@ -154,7 +154,7 @@ def feat2rects(feat_dict, stride_keys, pos_classes, siz_vec, asp_vec, prob_th):
         batched_feat = np.array(feat_dict[stride_key])
         batch, feat_h, feat_w, anchor_num, ch = batched_feat.shape
         assert(anchor_num == siz_vec.size * asp_vec.size)
-        assert(ch == (4 + (1 + len(pos_classes)))
+        assert(ch == (4 + (1 + len(pos_classes))))
 
         # initialize output (only once)
         if all_out is None:
@@ -166,7 +166,7 @@ def feat2rects(feat_dict, stride_keys, pos_classes, siz_vec, asp_vec, prob_th):
                 all_out.append(out_dict)
 
         for b in range(batch):
-            feat_img = batched_feat[b].reshape(feat_h, feat_w, siz_vec.size, asp_vec.size, 4 + (1 + len(pos_classes))
+            feat_img = batched_feat[b].reshape(feat_h, feat_w, siz_vec.size, asp_vec.size, 4 + (1 + len(pos_classes)))
             pos_feat, cls_feat = np.split(feat_img, [4], axis = -1)
             cls_feat = cls_feat[:,:,:,:,1:] # remove negative probability
             cls_pos_prob = np.max(cls_feat, axis = -1)
