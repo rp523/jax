@@ -1,6 +1,7 @@
 #coding: utf-8
 import numpy as np
 import os, time
+from PIL import Image, ImageDraw
 
 import jax
 import jax.numpy as jnp
@@ -106,7 +107,7 @@ def main():
             pos_valid = pos_valid.reshape(b, h, w, a, 1)
             out += (POS_ALPHA * smooth_l1(pos_diff) * pos_valid).sum()
 
-            pred_cls = jax.nn.softmax(pred_cls_logit)
+            pred_cls = jax.nn.softmax(pred_cls_logit, axis = -1)
             b, h, w, a = cls_valid.shape
             cls_valid = cls_valid.reshape(b, h, w, a, 1)
             out += (- cls * ((1.0 - pred_cls) ** FOCAL_GAMMA) * jnp.log(pred_cls + 1E-10) * cls_valid).sum()
@@ -145,16 +146,55 @@ def main():
             os.makedirs(dst_dir)
         CheckPoint.save_params(get_params(opt_state), dst_dir)
     trained_params = get_params(opt_state)  # list format
+
+    PROB_TH = 0.7
+    stride_keys = []
+    for stride in [2,4,8,16,32]:
+        stride_keys.append("a{}".format(stride))
+    for l in range(itrnum_in_epoch):
+        x, y = next(batch_getter)
+        preds = apply_fun(trained_params, x)
+        rects = feat2rects(preds, stride_keys, pos_classes, siz_vec, asp_vec, PROB_TH)
+        visualize(rects, x, pos_classes, "../vis", str(l))
+
     return trained_params
+
+def visualize(rects_list, image_list, pos_classes, dst_dir, name_key):
+    color_list = [  (255,0,0),
+                    (0,255,0),
+                    (0,0,255),
+                    ]
+    if not os.path.exists(dst_dir):
+        os.makedirs(dst_dir)
+    for b, (image, rects_dict) in enumerate(zip(image_list, rects_list)):
+        pil = Image.fromarray(image.astype(jnp.uint8))
+        img_w, img_h = pil.size
+        dr = ImageDraw.Draw(pil)
+        for c, pos_class in enumerate(pos_classes):
+            color = color_list[c]
+            for rect in rects_dict[pos_class]:
+                yc = rect[0] * (img_h)
+                xc = rect[1] * (img_w)
+                h  = rect[2] * (img_h)
+                w  = rect[3] * (img_h)
+                y0 = yc - h / 2
+                x0 = xc - w / 2
+                y1 = yc + h / 2
+                x1 = xc + w / 2
+                dr.rectangle((x0, y0, x1, y1), outline = color, width = 1)
+        dst_path = os.path.join(dst_dir, name_key + "_{}.png".format(i))
+        pil.save(dst_path)
+        print(dst_path)
 
 def feat2rects(feat_dict, stride_keys, pos_classes, siz_vec, asp_vec, prob_th):
     all_out = None
 
+    anchor_num = siz_vec.size * asp_vec.size
     for stride_key in stride_keys:
-        batched_feat = np.array(feat_dict[stride_key])
-        batch, feat_h, feat_w, anchor_num, ch = batched_feat.shape
-        assert(anchor_num == siz_vec.size * asp_vec.size)
-        assert(ch == (4 + (1 + len(pos_classes))))
+        batched_feat = jnp.array(feat_dict[stride_key])
+        batch, feat_h, feat_w, feat_ch = batched_feat.shape
+        ch = (4 + (1 + len(pos_classes)))
+        assert(feat_ch == anchor_num * ch)
 
         # initialize output (only once)
         if all_out is None:
@@ -167,10 +207,11 @@ def feat2rects(feat_dict, stride_keys, pos_classes, siz_vec, asp_vec, prob_th):
 
         for b in range(batch):
             feat_img = batched_feat[b].reshape(feat_h, feat_w, siz_vec.size, asp_vec.size, 4 + (1 + len(pos_classes)))
-            pos_feat, cls_feat = np.split(feat_img, [4], axis = -1)
-            cls_feat = cls_feat[:,:,:,:,1:] # remove negative probability
-            cls_pos_prob = np.max(cls_feat, axis = -1)
-            cls_pos_idx  = np.argmax(cls_feat, axis = -1)
+            pos_feat, class_logit_feat = np.split(feat_img, [4], axis = -1)
+            class_prob = jax.nn.softmax(class_logit_feat, axis = -1)
+            positive_class_prob = class_prob[:,:,:,:,1:] # remove negative probability
+            max_positive_prob = np.max(positive_class_prob, axis = -1)
+            max_positive_idx  = np.argmax(positive_class_prob, axis = -1)
 
             base_h = 1.0 / feat_h
             base_w = 1.0 / feat_w
@@ -180,15 +221,16 @@ def feat2rects(feat_dict, stride_keys, pos_classes, siz_vec, asp_vec, prob_th):
                     xc = (w + 0.5) * base_w
                     for s, siz in enumerate(siz_vec):
                         for a, asp in enumerate(asp_vec):
-                            prob = cls_pos_prob[b, h, w, s, a]
-                            if prob_pos > prob_th:
-                                f_yc, f_xc, f_h, f_w = pos_feat[b, h, w, s, a]
+                            max_prob = max_positive_prob[h, w, s, a]
+                            if max_prob > prob_th:
+                                f_yc, f_xc, f_h, f_w = pos_feat[h, w, s, a]
                                 rect_h = base_h * siz * (asp ** -0.5) * np.exp(f_h)
                                 rect_w = base_w * siz * (asp **  0.5) * np.exp(f_w)
                                 rect_yc = yc + base_h * f_yc
                                 rect_xc = xc + base_w * f_xc
-                                pos_class = pos_classes[cls_pos_idx[b, h, w, s, a]]
-                                all_out[b][pos_class].append([rect_yc, rect_xc, rect_h, rect_w])
+                                pos_class = pos_classes[max_positive_idx[h, w, s, a]]
+                                rect = [rect_yc, rect_xc, rect_h, rect_w]
+                                all_out[b][pos_class].append(rect)
     return all_out
 
 def arrange_annot(batched_labels, pos_classes, siz_vec, asp_vec, feat_h, feat_w):
