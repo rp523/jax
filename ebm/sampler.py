@@ -5,17 +5,23 @@ import matplotlib.cm as cm
 from tqdm import tqdm
 
 class Sampler:
-    def __init__(self):
-        self.__maker = Sampler.__Maker()
+    def __init__(self, batch_size = 1):
+        self.__maker = Sampler.__Maker(batch_size)
     def sample(self):
         return next(self.__maker)
-    def __Maker():
+    def __Maker(batch_size):
+        xy = np.empty((batch_size, 2), dtype = np.float32)
+        valid_num = 0
         while True:
             x = np.random.uniform()
             y = np.random.uniform()
             z = np.random.uniform()
             if z < Sampler.__prob(x, y):
-                yield x, y
+                xy[valid_num] = np.array([x, y])
+                valid_num += 1
+            if valid_num == batch_size:
+                yield xy
+                valid_num = 0
     def __prob(x, y):
         delta_r = 0.2
         top_num = 3
@@ -31,14 +37,14 @@ class Sampler:
         return ret
 
 def main():
-    SAMPLE_NUM = 999999
+    SAMPLE_NUM = 99999
     s = Sampler()
     x_vec = np.zeros(SAMPLE_NUM, dtype = np.float32)
     y_vec = np.zeros(SAMPLE_NUM, dtype = np.float32)
     for i in tqdm(range(SAMPLE_NUM)):
-        x, y = s.sample()
-        x_vec[i] = x
-        y_vec[i] = y
+        xy = s.sample()
+        x_vec[i] = xy[0, 0]
+        y_vec[i] = xy[0, 1]
     
     fig = plt.figure()
     ax = fig.add_subplot(111)
