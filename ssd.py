@@ -216,7 +216,8 @@ def feat2rects(feat_dict, stride_keys, pos_classes, siz_vec, asp_vec, prob_th):
 
         for b in range(batch):
             feat_img = batched_feat[b].reshape(feat_h, feat_w, siz_vec.size, asp_vec.size, 4 + (1 + len(pos_classes)))
-            pos_feat, class_logit_feat = np.split(feat_img, [4], axis = -1)
+            split_feat_img = np.split(feat_img, [4], axis = -1)
+            pos_feat, class_logit_feat = split_feat_img[0], split_feat_img[1]
             class_prob = jax.nn.softmax(class_logit_feat, axis = -1)
             positive_class_prob = class_prob[:,:,:,:,1:] # remove negative probability
             max_positive_prob = np.max(positive_class_prob, axis = -1)
