@@ -191,7 +191,7 @@ def visualize(rects_list, image_list, pos_classes, dst_dir, name_key):
                 y1 = yc + h / 2
                 x1 = xc + w / 2
                 dr.rectangle((x0, y0, x1, y1), outline = color, width = 1)
-        dst_path = os.path.join(dst_dir, name_key + "_{}.png".format(i))
+        dst_path = os.path.join(dst_dir, name_key + "_{}.png".format(b))
         pil.save(dst_path)
         print(dst_path)
 
