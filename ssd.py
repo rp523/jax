@@ -74,6 +74,7 @@ def main():
     asp_vec = ANCHOR_ASP_MAX ** np.linspace(-1, 1, ANCHOR_ASP_NUM)
 
     pos_classes = ["car", "person"]
+    all_class_num = 1 + len(pos_classes)
     img_h = 128
     img_w = 256
     batch_size = BATCH_SIZE
@@ -87,7 +88,9 @@ def main():
     dataset = CityScapes(r"/mnt/hdd/dataset/cityscapes", rng, img_h, img_w)
     batch_getter = make_batch_getter(dataset, rng1, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w)
 
+    # yのクラスはSoftmaxによる正規化済
     def loss(params, x, y):
+        # predsのクラスはまだ正規化されていないロジット値
         preds = apply_fun(params, x)
         POS_ALPHA = 1.0
         FOCAL_GAMMA = 2.0
@@ -97,19 +100,22 @@ def main():
         for stride in [2,4,8,16,32]:
             key = "a{}".format(stride)
             pred = preds[key]
-            b, h, w, ch = pred.shape
-            pred = pred.reshape(b, h, w, siz_vec.size * asp_vec.size, -1)
+            b, h, w, _ = pred.shape
+            pred = pred.reshape((b, h, w, siz_vec.size, asp_vec.size, 4 + all_class_num))
             pred_pos, pred_cls_logit = jnp.split(pred, [4], axis = -1)
             pos, pos_valid, cls, cls_valid = y[key]
-            pos_diff = pred_pos - pos
 
-            b, h, w, a = pos_valid.shape
-            pos_valid = pos_valid.reshape(b, h, w, a, 1)
-            out += (POS_ALPHA * smooth_l1(pos_diff) * pos_valid).sum()
+            b, h, w, s, a = pos_valid.shape
+            pos_valid = pos_valid.reshape(b, h, w, s, a, 1)
+            assert(pred_pos.shape == (b, h, w, s, a, 4))
+            out += (POS_ALPHA * smooth_l1(pred_pos - pos) * pos_valid).sum()
 
+            #assert(cls.min() >= 0.0)
+            #assert(cls.max() <= 1.0)
             pred_cls = jax.nn.softmax(pred_cls_logit, axis = -1)
-            b, h, w, a = cls_valid.shape
-            cls_valid = cls_valid.reshape(b, h, w, a, 1)
+            assert(pred_cls.shape == (b, h, w, s, a, all_class_num))
+            b, h, w, s, a = cls_valid.shape
+            cls_valid = cls_valid.reshape(b, h, w, s, a, 1)
             out += (- cls * ((1.0 - pred_cls) ** FOCAL_GAMMA) * jnp.log(pred_cls + 1E-10) * cls_valid).sum()
         # batch average
         out /= x.shape[0]
@@ -191,75 +197,86 @@ def visualize(rects_list, image_list, pos_classes, dst_dir, name_key):
                 y1 = yc + h / 2
                 x1 = xc + w / 2
                 dr.rectangle((x0, y0, x1, y1), outline = color, width = 1)
-        dst_path = os.path.join(dst_dir, name_key + "_{}.png".format(i))
+        dst_path = os.path.join(dst_dir, name_key + "_{}.png".format(b))
         pil.save(dst_path)
         print(dst_path)
 
+# classについてはsoftmaxで正規化済である想定
 def feat2rects(feat_dict, stride_keys, pos_classes, siz_vec, asp_vec, prob_th):
     all_out = None
 
     anchor_num = siz_vec.size * asp_vec.size
     for stride_key in stride_keys:
+        # 特定のスケール特徴量マップのバッチ
         batched_feat = jnp.array(feat_dict[stride_key])
-        batch, feat_h, feat_w, feat_ch = batched_feat.shape
-        ch = (4 + (1 + len(pos_classes)))
-        assert(feat_ch == anchor_num * ch)
+        batch_size, feat_h, feat_w, feat_ch = batched_feat.shape
+        all_class_num = 1 + len(pos_classes)
+        vecsize_per_anchor = 4 + all_class_num
+        assert(feat_ch == anchor_num * vecsize_per_anchor)
 
         # initialize output (only once)
         if all_out is None:
             all_out = []
-            for b in range(batch):
+            for b in range(batch_size):
                 out_dict = {}
                 for pos_class in pos_classes:
                     out_dict[pos_class] = []
                 all_out.append(out_dict)
 
-        for b in range(batch):
-            feat_img = batched_feat[b].reshape(feat_h, feat_w, siz_vec.size, asp_vec.size, 4 + (1 + len(pos_classes)))
-            pos_feat, class_logit_feat = np.split(feat_img, [4], axis = -1)
-            class_prob = jax.nn.softmax(class_logit_feat, axis = -1)
-            positive_class_prob = class_prob[:,:,:,:,1:] # remove negative probability
-            max_positive_prob = np.max(positive_class_prob, axis = -1)
-            max_positive_idx  = np.argmax(positive_class_prob, axis = -1)
+        for b, feat_img in enumerate(range(batched_feat)):
+            feat_img = feat_img.reshape((feat_h, feat_w, siz_vec.size, asp_vec.size, vecsize_per_anchor))
+            split_feat_img = np.split(feat_img, [4], axis = -1)
+            pos_feat, cls_prob = split_feat_img[0], split_feat_img[1]
+            assert(pos_feat.shape == (feat_h, feat_w, siz_vec.size, asp_vec.size, 4))
+            assert(cls_prob.shape == (feat_h, feat_w, siz_vec.size, asp_vec.size, all_class_num))
+            positive_cls_prob = cls_prob[:,:,:,:,1:] # remove negative probability
+            max_positive_prob = np.max(positive_cls_prob, axis = -1)
+            max_positive_idx  = np.argmax(positive_cls_prob, axis = -1)
 
-            base_h = 1.0 / feat_h
-            base_w = 1.0 / feat_w
-            for h in range(feat_h):
-                yc = (h + 0.5) * base_h
-                for w in range(feat_w):
-                    xc = (w + 0.5) * base_w
-                    for s, siz in enumerate(siz_vec):
-                        for a, asp in enumerate(asp_vec):
-                            max_prob = max_positive_prob[h, w, s, a]
+            base_yc = (np.arange(feat_h) + 0.5) / feat_h
+            base_yc = np.tile(base_yc.reshape(-1, 1), (1, feat_w))
+            base_xc = (np.arange(feat_w) + 0.5) / feat_w
+            base_xc = np.tile(base_xc.reshape(1, -1), (feat_h, 1))
+            assert(base_yc.shape == base_xc.shape)
+
+            for s, siz in enumerate(siz_vec):
+                for a, asp in enumerate(asp_vec):
+                    base_h = (1.0 / feat_h) * siz * (asp ** (-0.5))
+                    base_w = (1.0 / feat_w) * siz * (asp ** ( 0.5))
+                    for y_idx in range(feat_h):
+                        for x_idx in range(feat_w):
+                            max_prob = max_positive_prob[y_idx, x_idx, s, a]
                             if max_prob > prob_th:
-                                f_yc, f_xc, f_h, f_w = pos_feat[h, w, s, a]
-                                rect_h = base_h * siz * (asp ** -0.5) * np.exp(f_h)
-                                rect_w = base_w * siz * (asp **  0.5) * np.exp(f_w)
-                                rect_yc = yc + base_h * f_yc
-                                rect_xc = xc + base_w * f_xc
-                                pos_class = pos_classes[max_positive_idx[h, w, s, a]]
+                                f_yc, f_xc, f_h, f_w = pos_feat[y_idx, x_idx, s, a]
+                                rect_h = base_h * np.exp(f_h)
+                                rect_w = base_w * np.exp(f_w)
+                                rect_yc = base_yc[y_idx, x_idx] + base_h * f_yc
+                                rect_xc = base_xc[y_idx, x_idx] + base_w * f_xc
+                                pos_class = pos_classes[max_positive_idx[y_idx, x_idx, s, a]]
                                 rect = [rect_yc, rect_xc, rect_h, rect_w]
                                 all_out[b][pos_class].append(rect)
     return all_out
 
-def arrange_annot(batched_labels, pos_classes, siz_vec, asp_vec, feat_h, feat_w):
+# index処理があるので、jax.numpyではなくnumpyで
+def rects2feat(batched_annots, pos_classes, siz_vec, asp_vec, feat_h, feat_w):
     POS_IOU_TH = 0.5
     NEG_IOU_TH = 0.4
-    batch_size = len(batched_labels)
-    all_iou = np.zeros((batch_size, siz_vec.size, asp_vec.size, feat_h, feat_w), dtype = np.float32)
-    out_yc  = np.zeros((batch_size, siz_vec.size, asp_vec.size, feat_h, feat_w), dtype = np.float32)
-    out_xc  = np.zeros((batch_size, siz_vec.size, asp_vec.size, feat_h, feat_w), dtype = np.float32)
-    out_h   = np.zeros((batch_size, siz_vec.size, asp_vec.size, feat_h, feat_w), dtype = np.float32)
-    out_w   = np.zeros((batch_size, siz_vec.size, asp_vec.size, feat_h, feat_w), dtype = np.float32)
-    out_cls = np.zeros((batch_size, siz_vec.size, asp_vec.size, feat_h, feat_w), dtype = np.int32)
+    batch_size = len(batched_annots)
+    all_iou = np.zeros((batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size), dtype = np.float32)
+    out_yc  = np.zeros((batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size), dtype = np.float32)
+    out_xc  = np.zeros((batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size), dtype = np.float32)
+    out_h   = np.zeros((batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size), dtype = np.float32)
+    out_w   = np.zeros((batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size), dtype = np.float32)
+    out_cls = np.zeros((batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size), dtype = np.int32)
 
     base_yc = (np.arange(feat_h) + 0.5) / feat_h
     base_yc = np.tile(base_yc.reshape(-1, 1), (1, feat_w))
     base_xc = (np.arange(feat_w) + 0.5) / feat_w
     base_xc = np.tile(base_xc.reshape(1, -1), (feat_h, 1))
+    assert(base_yc.shape == base_xc.shape)
 
-    for b, label in enumerate(batched_labels):
-        for label_name, rects in label.items():
+    for b, annots in enumerate(batched_annots):
+        for label_name, rects in annots.items():
             for rect in rects:
                 yc = rect[0]
                 xc = rect[1]
@@ -270,6 +287,14 @@ def arrange_annot(batched_labels, pos_classes, siz_vec, asp_vec, feat_h, feat_w)
                 y1 = yc + h / 2
                 x0 = xc - w / 2
                 x1 = xc + w / 2
+                assert(y0 >= 0.0)
+                assert(y0 <= 1.0)
+                assert(y1 >= 0.0)
+                assert(y1 <= 1.0)
+                assert(x0 >= 0.0)
+                assert(x0 <= 1.0)
+                assert(x1 >= 0.0)
+                assert(x1 <= 1.0)
 
                 for s, siz in enumerate(siz_vec):
                     for a, asp in enumerate(asp_vec):
@@ -284,52 +309,70 @@ def arrange_annot(batched_labels, pos_classes, siz_vec, asp_vec, feat_h, feat_w)
                         iou = calc_iou(  base_y0, base_y1, base_x0, base_x1, base_h, base_w,
                                                 y0, y1, x0, x1, h, w)
                         
-                        update_feat_idx = (iou > all_iou[b, s, a])
+                        update_feat_idx = (iou > all_iou[b, :, :, s, a])
                         if update_feat_idx.any():
-                            out_yc[ b, s, a, update_feat_idx] = ((yc - base_yc) / base_h)[update_feat_idx]
-                            out_xc[ b, s, a, update_feat_idx] = ((xc - base_xc) / base_w)[update_feat_idx]
-                            out_h[  b, s, a, update_feat_idx] = np.log(h / base_h)
-                            out_w[  b, s, a, update_feat_idx] = np.log(w / base_w)
-                            out_cls[b, s, a, update_feat_idx] = 1 + pos_classes.index(label_name)
-                            all_iou[b, s, a, update_feat_idx] = iou[update_feat_idx]
+                            out_yc[ b, update_feat_idx, s, a] = ((yc - base_yc) / base_h)[update_feat_idx]
+                            out_xc[ b, update_feat_idx, s, a] = ((xc - base_xc) / base_w)[update_feat_idx]
+                            out_h[  b, update_feat_idx, s, a] = np.log(h / base_h)
+                            out_w[  b, update_feat_idx, s, a] = np.log(w / base_w)
+                            out_cls[b, update_feat_idx, s, a] = 1 + pos_classes.index(label_name)
+                            all_iou[b, update_feat_idx, s, a] = iou[update_feat_idx]
 
     out_cls[all_iou < NEG_IOU_TH] = 0
     # reshape
-    all_iou = all_iou.transpose(0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size)
-    out_yc  = out_yc.transpose( 0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1)
-    out_xc  = out_xc.transpose( 0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1)
-    out_h   = out_h.transpose(  0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1)
-    out_w   = out_w.transpose(  0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1)
-    out_cls = out_cls.transpose(0, 3, 4, 1, 2).reshape(batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size)
+    assert(all_iou.shape == (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size))
+    out_yc  = out_yc.reshape( (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, 1))
+    out_xc  = out_xc.reshape( (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, 1))
+    out_h   = out_h.reshape(  (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, 1))
+    out_w   = out_w.reshape(  (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, 1))
+    assert(out_cls.shape == (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size))
 
     out_pos = np.append(np.append(out_yc, out_xc, axis = -1),
                         np.append(out_h , out_w , axis = -1),
                         axis = -1)
-    out_cls = np.eye(1 + len(pos_classes))[out_cls]
-    pos_valid = (POS_IOU_TH <= all_iou)
-    cls_valid = np.logical_or(all_iou < NEG_IOU_TH, POS_IOU_TH <= all_iou)
+    assert(out_pos.shape == (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, 4))
+
+    all_class_num = 1 + len(pos_classes)
+    out_cls = np.eye(all_class_num, dtype = np.float32)[out_cls]
+    assert(out_cls.shape == (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, all_class_num))
+    pos_valid = (POS_IOU_TH <= all_iou) # only positive
+    cls_valid = np.logical_or(all_iou < NEG_IOU_TH, POS_IOU_TH <= all_iou) # positive & negative
 
     return out_pos, pos_valid, out_cls, cls_valid
 
 def calc_iou(base_y0, base_y1, base_x0, base_x1, base_h, base_w,
                 y0, y1, x0, x1, h, w):
     feat_h, feat_w = base_y0.shape
+    assert((base_y0 <= base_y1).all())
+    assert((base_x0 <= base_x1).all())
+    assert((base_h > 0.0).all())
+    assert((base_w > 0.0).all())
+    assert(y0 <= y1)
+    assert(x0 <= x1)
+
     overlap = np.logical_and(   np.logical_and(base_y0 <= y1, y0 <= base_y1),
                                 np.logical_and(base_x0 <= x1, x0 <= base_x1))
-    and_y0 = np.maximum(base_y0, np.ones((feat_h, feat_w)) * y0)
-    and_y1 = np.minimum(base_y1, np.ones((feat_h, feat_w)) * y1)
-    and_x0 = np.maximum(base_x0, np.ones((feat_h, feat_w)) * x0)
-    and_x1 = np.minimum(base_x1, np.ones((feat_h, feat_w)) * x1)
+    assert(overlap.shape == (feat_h, feat_w))
+    ones = np.ones((feat_h, feat_w))
+    and_y0 = np.maximum(base_y0, ones * y0)
+    and_y1 = np.minimum(base_y1, ones * y1)
+    and_x0 = np.maximum(base_x0, ones * x0)
+    and_x1 = np.minimum(base_x1, ones * x1)
     and_h  = and_y1 - and_y0
     and_w  = and_x1 - and_x0
     and_s  = and_h  * and_w
+    assert((and_h[overlap] >= 0.0).all())
+    assert((and_w[overlap] >= 0.0).all())
+    assert((and_s[overlap] >= 0.0).all())
 
     base_s = base_h * base_w
     s      = h * w
     or_s   = base_s + s - and_s
-    
+    assert((or_s[overlap] >= 0.0).all())
+
     iou = np.zeros((feat_h, feat_w), dtype = np.float32)
-    iou[overlap] = (and_s / or_s)[overlap]
+    iou[overlap] = and_s[overlap] / or_s[overlap]
+    assert(iou.shape == (feat_h, feat_w))
     
     return iou
 
@@ -341,7 +384,7 @@ def make_batch_getter(dataset, rng, pos_classes, batch_size, siz_vec, asp_vec, i
         images, batched_labels = next(batch_gen)
         labels = {}
         for stride in [2, 4, 8, 16, 32]:
-            labels["a{}".format(stride)] = arrange_annot(batched_labels, pos_classes, siz_vec, asp_vec, img_h // stride, img_w // stride)
+            labels["a{}".format(stride)] = rects2feat(batched_labels, pos_classes, siz_vec, asp_vec, img_h // stride, img_w // stride)
         yield images, labels
 
 if "__main__" == __name__:
