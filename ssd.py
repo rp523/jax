@@ -329,22 +329,36 @@ def rects2feat(batched_annots, pos_classes, siz_vec, asp_vec, feat_h, feat_w):
 def calc_iou(base_y0, base_y1, base_x0, base_x1, base_h, base_w,
                 y0, y1, x0, x1, h, w):
     feat_h, feat_w = base_y0.shape
+    assert((base_y0 <= base_y1).all())
+    assert((base_x0 <= base_x1).all())
+    assert((base_h > 0.0).all())
+    assert((base_w > 0.0).all())
+    assert(y0 <= y1)
+    assert(x0 <= x1)
+
     overlap = np.logical_and(   np.logical_and(base_y0 <= y1, y0 <= base_y1),
                                 np.logical_and(base_x0 <= x1, x0 <= base_x1))
-    and_y0 = np.maximum(base_y0, np.ones((feat_h, feat_w)) * y0)
-    and_y1 = np.minimum(base_y1, np.ones((feat_h, feat_w)) * y1)
-    and_x0 = np.maximum(base_x0, np.ones((feat_h, feat_w)) * x0)
-    and_x1 = np.minimum(base_x1, np.ones((feat_h, feat_w)) * x1)
+    assert(overlap.shape == (feat_h, feat_w))
+    ones = np.ones((feat_h, feat_w))
+    and_y0 = np.maximum(base_y0, ones * y0)
+    and_y1 = np.minimum(base_y1, ones * y1)
+    and_x0 = np.maximum(base_x0, ones * x0)
+    and_x1 = np.minimum(base_x1, ones * x1)
     and_h  = and_y1 - and_y0
     and_w  = and_x1 - and_x0
     and_s  = and_h  * and_w
+    assert((and_h[overlap] >= 0.0).all())
+    assert((and_w[overlap] >= 0.0).all())
+    assert((and_s[overlap] >= 0.0).all())
 
     base_s = base_h * base_w
     s      = h * w
     or_s   = base_s + s - and_s
-    
+    assert((or_s[overlap] >= 0.0).all())
+
     iou = np.zeros((feat_h, feat_w), dtype = np.float32)
-    iou[overlap] = (and_s / or_s)[overlap]
+    iou[overlap] = and_s[overlap] / or_s[overlap]
+    assert(iou.shape == (feat_h, feat_w))
     
     return iou
 
