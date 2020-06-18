@@ -61,7 +61,7 @@ def SSD(pos_classes, siz_vec, asp_vec):
     return net
 
 def main():
-    BATCH_SIZE = 16
+    BATCH_SIZE = 8
     SEED = 0
     EPOCH_NUM = 500
 
@@ -132,14 +132,19 @@ def main():
     opt_state = opt_init(init_params)
     itrnum_in_epoch = dataset.itrnum_in_epoch("train", batch_size)
     cnt = 0
+    fori_num = 4
     t0 = time.time()
     for e in range(EPOCH_NUM):
-        for l in range(itrnum_in_epoch):
-            x, y = next(batch_getter)
-            loss_val, opt_state = update(cnt, opt_state, x, y)
-            cnt += 1
+        for l in range(itrnum_in_epoch // fori_num):
+            for _ in range(fori_num):
+                x, y = next(batch_getter)
+                loss_val, opt_state = update(cnt, opt_state, x, y)
+                cnt += 1
             t = time.time()
-            print("epoch=[{}/{}]".format(e + 1, EPOCH_NUM), "iter=[{}/{}]".format(l + 1, itrnum_in_epoch), "{:.1f}ms".format(1000 * (t - t0)), loss_val)
+            print(  "epoch=[{}/{}]".format(e + 1, EPOCH_NUM),
+                    "iter=[{}/{}]".format(l * fori_num + 1, itrnum_in_epoch),
+                    "{:.1f}sec".format(t - t0),
+                    loss_val)
             t0 = t
         dst_dir = os.path.join("../ssd_checkpoint", "epoch{}".format(e + 1))
         if not os.path.exists(dst_dir):
