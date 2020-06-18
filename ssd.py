@@ -195,50 +195,58 @@ def visualize(rects_list, image_list, pos_classes, dst_dir, name_key):
         pil.save(dst_path)
         print(dst_path)
 
+# classについてはsoftmaxで正規化済である想定
 def feat2rects(feat_dict, stride_keys, pos_classes, siz_vec, asp_vec, prob_th):
     all_out = None
 
     anchor_num = siz_vec.size * asp_vec.size
     for stride_key in stride_keys:
+        # 特定のスケール特徴量マップのバッチ
         batched_feat = jnp.array(feat_dict[stride_key])
-        batch, feat_h, feat_w, feat_ch = batched_feat.shape
-        ch = (4 + (1 + len(pos_classes)))
-        assert(feat_ch == anchor_num * ch)
+        batch_size, feat_h, feat_w, feat_ch = batched_feat.shape
+        all_class_num = 1 + len(pos_classes)
+        vecsize_per_anchor = 4 + all_class_num
+        assert(feat_ch == anchor_num * vecsize_per_anchor)
 
         # initialize output (only once)
         if all_out is None:
             all_out = []
-            for b in range(batch):
+            for b in range(batch_size):
                 out_dict = {}
                 for pos_class in pos_classes:
                     out_dict[pos_class] = []
                 all_out.append(out_dict)
 
-        for b in range(batch):
-            feat_img = batched_feat[b].reshape(feat_h, feat_w, siz_vec.size, asp_vec.size, 4 + (1 + len(pos_classes)))
+        for b, feat_img in enumerate(range(batched_feat)):
+            feat_img = feat_img.reshape((feat_h, feat_w, siz_vec.size, asp_vec.size, vecsize_per_anchor))
             split_feat_img = np.split(feat_img, [4], axis = -1)
-            pos_feat, class_logit_feat = split_feat_img[0], split_feat_img[1]
-            class_prob = jax.nn.softmax(class_logit_feat, axis = -1)
-            positive_class_prob = class_prob[:,:,:,:,1:] # remove negative probability
-            max_positive_prob = np.max(positive_class_prob, axis = -1)
-            max_positive_idx  = np.argmax(positive_class_prob, axis = -1)
+            pos_feat, cls_prob = split_feat_img[0], split_feat_img[1]
+            assert(pos_feat.shape == (feat_h, feat_w, siz_vec.size, asp_vec.size, 4))
+            assert(cls_prob.shape == (feat_h, feat_w, siz_vec.size, asp_vec.size, all_class_num))
+            positive_cls_prob = cls_prob[:,:,:,:,1:] # remove negative probability
+            max_positive_prob = np.max(positive_cls_prob, axis = -1)
+            max_positive_idx  = np.argmax(positive_cls_prob, axis = -1)
 
-            base_h = 1.0 / feat_h
-            base_w = 1.0 / feat_w
-            for h in range(feat_h):
-                yc = (h + 0.5) * base_h
-                for w in range(feat_w):
-                    xc = (w + 0.5) * base_w
-                    for s, siz in enumerate(siz_vec):
-                        for a, asp in enumerate(asp_vec):
-                            max_prob = max_positive_prob[h, w, s, a]
+            base_yc = (np.arange(feat_h) + 0.5) / feat_h
+            base_yc = np.tile(base_yc.reshape(-1, 1), (1, feat_w))
+            base_xc = (np.arange(feat_w) + 0.5) / feat_w
+            base_xc = np.tile(base_xc.reshape(1, -1), (feat_h, 1))
+            assert(base_yc.shape == base_xc.shape)
+
+            for s, siz in enumerate(siz_vec):
+                for a, asp in enumerate(asp_vec):
+                    base_h = (1.0 / feat_h) * siz * (asp ** (-0.5))
+                    base_w = (1.0 / feat_w) * siz * (asp ** ( 0.5))
+                    for y_idx in range(feat_h):
+                        for x_idx in range(feat_w):
+                            max_prob = max_positive_prob[y_idx, x_idx, s, a]
                             if max_prob > prob_th:
-                                f_yc, f_xc, f_h, f_w = pos_feat[h, w, s, a]
-                                rect_h = base_h * siz * (asp ** -0.5) * np.exp(f_h)
-                                rect_w = base_w * siz * (asp **  0.5) * np.exp(f_w)
-                                rect_yc = yc + base_h * f_yc
-                                rect_xc = xc + base_w * f_xc
-                                pos_class = pos_classes[max_positive_idx[h, w, s, a]]
+                                f_yc, f_xc, f_h, f_w = pos_feat[y_idx, x_idx, s, a]
+                                rect_h = base_h * np.exp(f_h)
+                                rect_w = base_w * np.exp(f_w)
+                                rect_yc = base_yc[y_idx, x_idx] + base_h * f_yc
+                                rect_xc = base_xc[y_idx, x_idx] + base_w * f_xc
+                                pos_class = pos_classes[max_positive_idx[y_idx, x_idx, s, a]]
                                 rect = [rect_yc, rect_xc, rect_h, rect_w]
                                 all_out[b][pos_class].append(rect)
     return all_out
