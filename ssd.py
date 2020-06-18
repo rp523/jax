@@ -65,7 +65,6 @@ def main():
     SEED = 0
     EPOCH_NUM = 500
 
-    batch_size = BATCH_SIZE
     rng = jax.random.PRNGKey(SEED)
     ANCHOR_SIZ_NUM = 3
     siz_vec = 2 ** (np.arange(ANCHOR_SIZ_NUM) / ANCHOR_SIZ_NUM)
@@ -73,10 +72,11 @@ def main():
     ANCHOR_ASP_MAX = 2.0
     ANCHOR_ASP_NUM = 3
     asp_vec = ANCHOR_ASP_MAX ** np.linspace(-1, 1, ANCHOR_ASP_NUM)
+
     pos_classes = ["car", "person"]
     img_h = 128
     img_w = 256
-    batch_size = batch_size
+    batch_size = BATCH_SIZE
     init_fun, apply_fun = SSD(pos_classes, siz_vec, asp_vec).get_jax_model()
 
     rng1, rng = jax.random.split(rng)
