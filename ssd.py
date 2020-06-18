@@ -74,6 +74,7 @@ def main():
     asp_vec = ANCHOR_ASP_MAX ** np.linspace(-1, 1, ANCHOR_ASP_NUM)
 
     pos_classes = ["car", "person"]
+    all_class_num = 1 + len(pos_classes)
     img_h = 128
     img_w = 256
     batch_size = BATCH_SIZE
@@ -87,7 +88,9 @@ def main():
     dataset = CityScapes(r"/mnt/hdd/dataset/cityscapes", rng, img_h, img_w)
     batch_getter = make_batch_getter(dataset, rng1, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w)
 
+    # yのクラスはSoftmaxによる正規化済
     def loss(params, x, y):
+        # predsのクラスはまだ正規化されていないロジット値
         preds = apply_fun(params, x)
         POS_ALPHA = 1.0
         FOCAL_GAMMA = 2.0
@@ -97,19 +100,22 @@ def main():
         for stride in [2,4,8,16,32]:
             key = "a{}".format(stride)
             pred = preds[key]
-            b, h, w, ch = pred.shape
-            pred = pred.reshape(b, h, w, siz_vec.size * asp_vec.size, -1)
+            b, h, w, _ = pred.shape
+            pred = pred.reshape((b, h, w, siz_vec.size, asp_vec.size, 4 + all_class_num))
             pred_pos, pred_cls_logit = jnp.split(pred, [4], axis = -1)
             pos, pos_valid, cls, cls_valid = y[key]
-            pos_diff = pred_pos - pos
 
-            b, h, w, a = pos_valid.shape
-            pos_valid = pos_valid.reshape(b, h, w, a, 1)
-            out += (POS_ALPHA * smooth_l1(pos_diff) * pos_valid).sum()
+            b, h, w, s, a = pos_valid.shape
+            pos_valid = pos_valid.reshape(b, h, w, s, a, 1)
+            assert(pred_pos.shape == (b, h, w, s, a, 4))
+            out += (POS_ALPHA * smooth_l1(pred_pos - pos) * pos_valid).sum()
 
+            #assert(cls.min() >= 0.0)
+            #assert(cls.max() <= 1.0)
             pred_cls = jax.nn.softmax(pred_cls_logit, axis = -1)
-            b, h, w, a = cls_valid.shape
-            cls_valid = cls_valid.reshape(b, h, w, a, 1)
+            assert(pred_cls.shape == (b, h, w, s, a, all_class_num))
+            b, h, w, s, a = cls_valid.shape
+            cls_valid = cls_valid.reshape(b, h, w, s, a, 1)
             out += (- cls * ((1.0 - pred_cls) ** FOCAL_GAMMA) * jnp.log(pred_cls + 1E-10) * cls_valid).sum()
         # batch average
         out /= x.shape[0]
@@ -314,21 +320,21 @@ def rects2feat(batched_annots, pos_classes, siz_vec, asp_vec, feat_h, feat_w):
 
     out_cls[all_iou < NEG_IOU_TH] = 0
     # reshape
-    all_iou = all_iou.reshape((batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size))
-    out_yc  = out_yc.reshape( (batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1))
-    out_xc  = out_xc.reshape( (batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1))
-    out_h   = out_h.reshape(  (batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1))
-    out_w   = out_w.reshape(  (batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1))
-    out_cls = out_cls.reshape((batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size))
+    assert(all_iou.shape == (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size))
+    out_yc  = out_yc.reshape( (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, 1))
+    out_xc  = out_xc.reshape( (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, 1))
+    out_h   = out_h.reshape(  (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, 1))
+    out_w   = out_w.reshape(  (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, 1))
+    assert(out_cls.shape == (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size))
 
     out_pos = np.append(np.append(out_yc, out_xc, axis = -1),
                         np.append(out_h , out_w , axis = -1),
                         axis = -1)
-    assert(out_pos.shape == (batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 4))
+    assert(out_pos.shape == (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, 4))
 
     all_class_num = 1 + len(pos_classes)
     out_cls = np.eye(all_class_num, dtype = np.float32)[out_cls]
-    assert(out_cls.shape == (batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, all_class_num))
+    assert(out_cls.shape == (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, all_class_num))
     pos_valid = (POS_IOU_TH <= all_iou) # only positive
     cls_valid = np.logical_or(all_iou < NEG_IOU_TH, POS_IOU_TH <= all_iou) # positive & negative
 
