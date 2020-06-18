@@ -61,11 +61,10 @@ def SSD(pos_classes, siz_vec, asp_vec):
     return net
 
 def main():
-    BATCH_SIZE = 16
+    BATCH_SIZE = 8
     SEED = 0
     EPOCH_NUM = 500
 
-    batch_size = BATCH_SIZE
     rng = jax.random.PRNGKey(SEED)
     ANCHOR_SIZ_NUM = 3
     siz_vec = 2 ** (np.arange(ANCHOR_SIZ_NUM) / ANCHOR_SIZ_NUM)
@@ -73,10 +72,11 @@ def main():
     ANCHOR_ASP_MAX = 2.0
     ANCHOR_ASP_NUM = 3
     asp_vec = ANCHOR_ASP_MAX ** np.linspace(-1, 1, ANCHOR_ASP_NUM)
+
     pos_classes = ["car", "person"]
     img_h = 128
     img_w = 256
-    batch_size = batch_size
+    batch_size = BATCH_SIZE
     init_fun, apply_fun = SSD(pos_classes, siz_vec, asp_vec).get_jax_model()
 
     rng1, rng = jax.random.split(rng)
@@ -132,14 +132,23 @@ def main():
     opt_state = opt_init(init_params)
     itrnum_in_epoch = dataset.itrnum_in_epoch("train", batch_size)
     cnt = 0
+    fori_num = 4
+    loss_val = 0.0
+    def body_fun(idx, old_info):
+        _, opt_state = old_info
+        x, y = next(batch_getter)
+        loss_val, opt_state = update(idx, opt_state, x, y)
+        return (loss_val, opt_state)
     t0 = time.time()
     for e in range(EPOCH_NUM):
-        for l in range(itrnum_in_epoch):
-            x, y = next(batch_getter)
-            loss_val, opt_state = update(cnt, opt_state, x, y)
-            cnt += 1
+        for l in range(itrnum_in_epoch // fori_num):
+            loss_val, opt_state = jax.lax.fori_loop(cnt, cnt + fori_num, body_fun, (loss_val, opt_state))
+            cnt += fori_num
             t = time.time()
-            print("epoch=[{}/{}]".format(e + 1, EPOCH_NUM), "iter=[{}/{}]".format(l + 1, itrnum_in_epoch), "{:.1f}ms".format(1000 * (t - t0)), loss_val)
+            print(  "epoch=[{}/{}]".format(e + 1, EPOCH_NUM),
+                    "iter=[{}/{}]".format(l * fori_num + 1, itrnum_in_epoch),
+                    "{:.1f}sec".format(t - t0),
+                    loss_val)
             t0 = t
         dst_dir = os.path.join("../ssd_checkpoint", "epoch{}".format(e + 1))
         if not os.path.exists(dst_dir):
