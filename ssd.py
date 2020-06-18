@@ -61,7 +61,7 @@ def SSD(pos_classes, siz_vec, asp_vec):
     return net
 
 def main():
-    BATCH_SIZE = 8
+    BATCH_SIZE = 12
     SEED = 0
     EPOCH_NUM = 500
 
@@ -138,7 +138,7 @@ def main():
     opt_state = opt_init(init_params)
     itrnum_in_epoch = dataset.itrnum_in_epoch("train", batch_size)
     cnt = 0
-    fori_num = 4
+    fori_num = 16
     loss_val = 0.0
     def body_fun(idx, old_info):
         _, opt_state = old_info
@@ -148,12 +148,13 @@ def main():
     t0 = time.time()
     for e in range(EPOCH_NUM):
         for l in range(itrnum_in_epoch // fori_num):
+            # fori_loopまではメモリオーバーでjit化できない
             loss_val, opt_state = jax.lax.fori_loop(cnt, cnt + fori_num, body_fun, (loss_val, opt_state))
             cnt += fori_num
             t = time.time()
             print(  "epoch=[{}/{}]".format(e + 1, EPOCH_NUM),
                     "iter=[{}/{}]".format(l * fori_num + 1, itrnum_in_epoch),
-                    "{:.1f}sec".format(t - t0),
+                    "{:.1f}ms".format(1000 * (t - t0)),
                     loss_val)
             t0 = t
         dst_dir = os.path.join("../ssd_checkpoint", "epoch{}".format(e + 1))
