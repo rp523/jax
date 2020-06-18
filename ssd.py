@@ -133,13 +133,17 @@ def main():
     itrnum_in_epoch = dataset.itrnum_in_epoch("train", batch_size)
     cnt = 0
     fori_num = 4
+    loss_val = 0.0
+    def body_fun(idx, old_info):
+        _, opt_state = old_info
+        x, y = next(batch_getter)
+        loss_val, opt_state = update(idx, opt_state, x, y)
+        return (loss_val, opt_state)
     t0 = time.time()
     for e in range(EPOCH_NUM):
         for l in range(itrnum_in_epoch // fori_num):
-            for _ in range(fori_num):
-                x, y = next(batch_getter)
-                loss_val, opt_state = update(cnt, opt_state, x, y)
-                cnt += 1
+            loss_val, opt_state = jax.lax.fori_loop(cnt, cnt + fori_num, body_fun, (loss_val, opt_state))
+            cnt += fori_num
             t = time.time()
             print(  "epoch=[{}/{}]".format(e + 1, EPOCH_NUM),
                     "iter=[{}/{}]".format(l * fori_num + 1, itrnum_in_epoch),
