@@ -305,12 +305,12 @@ def rects2feat(batched_annots, pos_classes, siz_vec, asp_vec, feat_h, feat_w):
 
     out_cls[all_iou < NEG_IOU_TH] = 0
     # reshape
-    all_iou = all_iou.reshape(batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size)
-    out_yc  = out_yc.reshape( batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1)
-    out_xc  = out_xc.reshape( batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1)
-    out_h   = out_h.reshape(  batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1)
-    out_w   = out_w.reshape(  batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1)
-    out_cls = out_cls.reshape(batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size)
+    all_iou = all_iou.reshape((batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size))
+    out_yc  = out_yc.reshape( (batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1))
+    out_xc  = out_xc.reshape( (batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1))
+    out_h   = out_h.reshape(  (batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1))
+    out_w   = out_w.reshape(  (batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size, 1))
+    out_cls = out_cls.reshape((batch_size, feat_h, feat_w, siz_vec.size * asp_vec.size))
 
     out_pos = np.append(np.append(out_yc, out_xc, axis = -1),
                         np.append(out_h , out_w , axis = -1),
