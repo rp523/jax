@@ -389,8 +389,9 @@ def make_batch_getter(dataset, dataset_type, rng, pos_classes, batch_size, siz_v
             labels["a{}".format(stride)] = rects2feat(batched_labels, pos_classes, siz_vec, asp_vec, img_h // stride, img_w // stride)
         yield images, labels
 
-def encdec_test():
-    rng = jax.random.PRNGKey(0)
+# 学習とは別に、データのエンコード/デコードが正しいか確認
+def label_encdec_test():
+    rng = jax.random.PRNGKey(10)
     ANCHOR_SIZ_NUM = 3
     siz_vec = 2 ** (np.arange(ANCHOR_SIZ_NUM) / ANCHOR_SIZ_NUM)
     ANCHOR_ASP_MAX = 2.0
@@ -402,7 +403,7 @@ def encdec_test():
     img_w = 256
     batch_size = 4
     dataset = CityScapes(r"/mnt/hdd/dataset/cityscapes", rng, img_h, img_w)
-    batch_gen = dataset.make_generator( "test",
+    batch_gen = dataset.make_generator( "train",
                                         label_txt_list = pos_classes,
                                         batch_size = batch_size)
     for i in range(10):
