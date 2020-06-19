@@ -381,7 +381,14 @@ def calc_iou(base_y0, base_y1, base_x0, base_x1, base_h, base_w,
 def make_batch_getter(dataset, dataset_type, rng, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w):
     batch_gen = dataset.make_generator( dataset_type,
                                         label_txt_list = pos_classes,
-                                        batch_size = batch_size)
+                                        batch_size = batch_size,
+                                        aug_flip = True,
+                                        aug_crop_y0 = 0.25,
+                                        aug_crop_y1 = 0.75,
+                                        aug_crop_x0 = 0.25,
+                                        aug_crop_x1 = 0.75,
+    )
+
     while True:
         images, batched_labels = next(batch_gen)
         labels = {}
@@ -407,10 +414,10 @@ def label_encdec_test():
                                         label_txt_list = pos_classes,
                                         batch_size = batch_size,
                                         aug_flip = True,
-                                        aug_crop_y0 = 0.3,
-                                        aug_crop_y1 = 0.7,
-                                        aug_crop_x0 = 0.3,
-                                        aug_crop_x1 = 0.7,
+                                        aug_crop_y0 = 0.25,
+                                        aug_crop_y1 = 0.77,
+                                        aug_crop_x0 = 0.25,
+                                        aug_crop_x1 = 0.75,
                                         )
     for i in range(100):
         images, batched_labels = next(batch_gen)
