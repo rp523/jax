@@ -130,7 +130,13 @@ class CityScapes:
         n_data = len(key_list)
         return n_data // batch_size
 
-    def make_generator(self, train_type, label_txt_list, batch_size):
+    def make_generator(self, train_type, label_txt_list, batch_size,
+                        aug_flip = False,
+                        aug_crop_y0 = 0.0,
+                        aug_crop_y1 = 1.0,
+                        aug_crop_x0 = 0.0,
+                        aug_crop_x1 = 1.0,
+                        ):
         train_type_dict = self.__all[train_type]
         key_list = list(train_type_dict.keys())
         n_data = len(key_list)
@@ -141,9 +147,24 @@ class CityScapes:
             
             self.__rng, rng = jax.random.split(self.__rng)
             for i in jax.random.randint(rng, (batch_size,), 0, n_data):
+                # selected index of image
                 key = key_list[i]
                 tgt = train_type_dict[key]
                 assert("left" in tgt.keys())
+
+                flip = False
+                if aug_flip:
+                    self.__rng, rng = jax.random.split(self.__rng)
+                    flip = jax.random.randint(rng, (1,), 0, 2, jnp.bool)
+                self.__rng, rng = jax.random.split(self.__rng)
+                crop_y0 = jax.random.uniform(rng) * (aug_crop_y0 - 0.0) + 0.0
+                self.__rng, rng = jax.random.split(self.__rng)
+                crop_y1 = jax.random.uniform(rng) * (1.0 - aug_crop_y1) + aug_crop_y1
+                self.__rng, rng = jax.random.split(self.__rng)
+                crop_x0 = jax.random.uniform(rng) * (aug_crop_x0 - 0.0) + 0.0
+                self.__rng, rng = jax.random.split(self.__rng)
+                crop_x1 = jax.random.uniform(rng) * (1.0 - aug_crop_x1) + aug_crop_x1
+
                 if len(label_txt_list) > 0:
                     if "json" in tgt.keys():
                         label_info = self.__json_to_rects(tgt["json"], label_txt_list)
