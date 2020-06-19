@@ -163,7 +163,7 @@ def main():
         CheckPoint.save_params(get_params(opt_state), dst_dir)
     trained_params = get_params(opt_state)  # list format
 
-    PROB_TH = 0.7
+    PROB_TH = 0.9
     stride_keys = []
     for stride in [2,4,8,16,32]:
         stride_keys.append("a{}".format(stride))
@@ -224,7 +224,7 @@ def feat2rects(feat_dict, stride_keys, pos_classes, siz_vec, asp_vec, prob_th):
                     out_dict[pos_class] = []
                 all_out.append(out_dict)
 
-        for b, feat_img in enumerate(range(batched_feat)):
+        for b, feat_img in enumerate(batched_feat):
             feat_img = feat_img.reshape((feat_h, feat_w, siz_vec.size, asp_vec.size, vecsize_per_anchor))
             split_feat_img = np.split(feat_img, [4], axis = -1)
             pos_feat, cls_prob = split_feat_img[0], split_feat_img[1]
