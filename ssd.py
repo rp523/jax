@@ -11,7 +11,7 @@ from jax.experimental import optimizers
 from jax.experimental import stax
 from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
                                     FanOut, Flatten, GeneralConv, Identity,
-                                    MaxPool, Relu, LogSoftmax, Softmax)
+                                    MaxPool, Relu, LogSoftmax, Softmax, elementwise)
 from model.maker.model_maker import net_maker
 from dataset.cityscapes import CityScapes
 from checkpoint import CheckPoint
@@ -43,8 +43,13 @@ def StrideBlock(channel1,
                         Conv2WithSkip(ch1, k, 1),
                         Conv(ch2, (k, k), (2, 2), "SAME"), Relu,)
 
+def rescale(x):
+    return (x / 255) * 2.0 - 1.0
+Rescale = elementwise(rescale)
+
 def RootResNet18():
     net = net_maker()
+    net.add_layer(Rescale)
     net.add_layer(Conv(64, (7, 7), (2, 2), "SAME"), name = "f2")    # stride = 2
     net.add_layer(StrideBlock( 64, 128, 3), name =  "f4")             # stride = 4
     net.add_layer(StrideBlock(128, 256, 3), name =  "f8")            # stride = 8
