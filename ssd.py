@@ -90,7 +90,7 @@ def main():
     
     rng1, rng = jax.random.split(rng)
     dataset = CityScapes(r"/mnt/hdd/dataset/cityscapes", rng, img_h, img_w)
-    batch_getter = make_batch_getter(dataset, rng1, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w)
+    train_batch_getter = make_batch_getter(dataset, "train", rng1, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w)
 
     # yのクラスはSoftmaxによる正規化済
     def loss(params, x, y):
@@ -146,7 +146,7 @@ def main():
     loss_val = 0.0
     def body_fun(idx, old_info):
         _, opt_state = old_info
-        x, y = next(batch_getter)
+        x, y = next(train_batch_getter)
         loss_val, opt_state = update(idx, opt_state, x, y)
         return (loss_val, opt_state)
     t0 = time.time()
@@ -168,14 +168,15 @@ def main():
     trained_params = get_params(opt_state)  # list format
 
     PROB_TH = 0.9
+    test_batch_getter = make_batch_getter(dataset, "test", rng1, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w)
     stride_keys = []
     for stride in [2,4,8,16,32]:
         stride_keys.append("a{}".format(stride))
     for l in range(itrnum_in_epoch):
-        x, y = next(batch_getter)
+        x, y = next(test_batch_getter)
         preds = apply_fun(trained_params, x)
         rects = feat2rects(preds, stride_keys, pos_classes, siz_vec, asp_vec, PROB_TH)
-        visualize(rects, x, pos_classes, "../vis", str(l))
+        visualize(rects, x, pos_classes, "vis", str(l))
 
     return trained_params
 
@@ -377,8 +378,8 @@ def calc_iou(base_y0, base_y1, base_x0, base_x1, base_h, base_w,
     
     return iou
 
-def make_batch_getter(dataset, rng, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w):
-    batch_gen = dataset.make_generator( "train",
+def make_batch_getter(dataset, dataset_type, rng, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w):
+    batch_gen = dataset.make_generator( dataset_type,
                                         label_txt_list = pos_classes,
                                         batch_size = batch_size)
     while True:
