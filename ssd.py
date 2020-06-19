@@ -405,8 +405,14 @@ def label_encdec_test():
     dataset = CityScapes(r"/mnt/hdd/dataset/cityscapes", rng, img_h, img_w)
     batch_gen = dataset.make_generator( "train",
                                         label_txt_list = pos_classes,
-                                        batch_size = batch_size)
-    for i in range(10):
+                                        batch_size = batch_size,
+                                        aug_flip = True,
+                                        aug_crop_y0 = 0.3,
+                                        aug_crop_y1 = 0.7,
+                                        aug_crop_x0 = 0.3,
+                                        aug_crop_x1 = 0.7,
+                                        )
+    for i in range(100):
         images, batched_labels = next(batch_gen)
         feat_dict = {}
         stride_vec = [2, 4, 8, 16, 32]

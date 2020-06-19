@@ -99,7 +99,9 @@ class CityScapes:
             self.__all[train_type][file_key] = {}
         self.__all[train_type][file_key][file_type] = file_path
     
-    def __json_to_rects(self, json_path, label_list):
+    def __json_to_rects(self, json_path, label_list,
+                        flip,
+                        crop_y0, crop_y1, crop_x0, crop_x1):
         label_dict = {}
         info = json.load(open(json_path, "r", encoding="utf-8_sig"))
         img_h = info["imgHeight"]
@@ -113,15 +115,31 @@ class CityScapes:
                 x1 = np.clip(polygons[:,0].max() / (img_w - 1), 0, 1.0)
                 y0 = np.clip(polygons[:,1].min() / (img_h - 1), 0, 1.0)
                 y1 = np.clip(polygons[:,1].max() / (img_h - 1), 0, 1.0)
-                yc = (y0 + y1) / 2
-                xc = (x0 + x1) / 2
-                h  = y1 - y0
-                w  = x1 - x0
-                rect = np.array([yc, xc, h, w]).reshape(1, 4)
-                if not obj_label in label_dict.keys():
-                    label_dict[obj_label] = rect
-                else:
-                    label_dict[obj_label] = np.append(label_dict[obj_label], rect, axis = 0)
+
+                y0 = (y0 - crop_y0) / (crop_y1 - crop_y0)
+                y1 = (y1 - crop_y0) / (crop_y1 - crop_y0)
+                x0 = (x0 - crop_x0) / (crop_x1 - crop_x0)
+                x1 = (x1 - crop_x0) / (crop_x1 - crop_x0)
+
+                # rect may be out of image, due to cropping
+                if ((0.0 < x0) or (x1 < 1.0)) and ((0.0 < y0) or (y1 < 1.0)):
+                    y0 = np.clip(y0, 0.0, 1.0)
+                    y1 = np.clip(y1, 0.0, 1.0)
+                    x0 = np.clip(x0, 0.0, 1.0)
+                    x1 = np.clip(x1, 0.0, 1.0)
+
+                    yc = (y0 + y1) / 2
+                    xc = (x0 + x1) / 2
+                    h  = y1 - y0
+                    w  = x1 - x0
+                    if flip:
+                        xc = 1.0 - xc
+                    
+                    rect = np.array([yc, xc, h, w]).reshape(1, 4)
+                    if not obj_label in label_dict.keys():
+                        label_dict[obj_label] = rect
+                    else:
+                        label_dict[obj_label] = np.append(label_dict[obj_label], rect, axis = 0)
         return label_dict
     
     def itrnum_in_epoch(self, train_type, batch_size):
@@ -156,7 +174,7 @@ class CityScapes:
                 flip = False
                 if aug_flip:
                     self.__rng, rng = jax.random.split(self.__rng)
-                    flip = jax.random.randint(rng, (1,), 0, 2, jnp.bool)
+                    flip = bool(jax.random.randint(rng, (1,), 0, 2))
                 self.__rng, rng = jax.random.split(self.__rng)
                 crop_y0 = jax.random.uniform(rng) * (aug_crop_y0 - 0.0) + 0.0
                 self.__rng, rng = jax.random.split(self.__rng)
@@ -168,7 +186,8 @@ class CityScapes:
 
                 if len(label_txt_list) > 0:
                     if "json" in tgt.keys():
-                        label_info = self.__json_to_rects(tgt["json"], label_txt_list)
+                        label_info = self.__json_to_rects(tgt["json"], label_txt_list,
+                                                                flip, crop_y0, crop_y1, crop_x0, crop_x1)
                     else:
                         label_info = {}
                         for label in label_txt_list:
@@ -176,7 +195,7 @@ class CityScapes:
     
                 left_path = tgt["left"]
                 left_pil = Image.open(left_path)
-                org_w, org_h = left_pil.shape
+                org_w, org_h = left_pil.size
                 # crop augument
                 left_pil = left_pil.crop((int(crop_x0 * (org_w - 1)),
                                           int(crop_y0 * (org_h - 1)),
