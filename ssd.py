@@ -15,6 +15,10 @@ from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
 from model.maker.model_maker import net_maker
 from dataset.cityscapes import CityScapes
 from checkpoint import CheckPoint
+COLOR_LIST = [  (255,0,0),
+                (0,255,0),
+                (0,0,255),
+                ]
 
 def Conv2WithSkip(  channel_size,
                     kernel_size,
@@ -176,26 +180,23 @@ def main():
     return trained_params
 
 def visualize(rects_list, image_list, pos_classes, dst_dir, name_key):
-    color_list = [  (255,0,0),
-                    (0,255,0),
-                    (0,0,255),
-                    ]
     if not os.path.exists(dst_dir):
         os.makedirs(dst_dir)
+    dst_dir = os.path.abspath(dst_dir)
     for b, (image, rects_dict) in enumerate(zip(image_list, rects_list)):
         pil = Image.fromarray(image.astype(jnp.uint8))
         img_w, img_h = pil.size
         dr = ImageDraw.Draw(pil)
         for c, pos_class in enumerate(pos_classes):
-            color = color_list[c]
+            color = COLOR_LIST[c]
             for rect in rects_dict[pos_class]:
-                yc = rect[0] * (img_h)
-                xc = rect[1] * (img_w)
-                h  = rect[2] * (img_h)
-                w  = rect[3] * (img_h)
+                yc = rect[0] * (img_h - 1)
+                xc = rect[1] * (img_w - 1)
+                h  = rect[2] * (img_h - 1)
+                w  = rect[3] * (img_w - 1)
                 y0 = yc - h / 2
-                x0 = xc - w / 2
                 y1 = yc + h / 2
+                x0 = xc - w / 2
                 x1 = xc + w / 2
                 dr.rectangle((x0, y0, x1, y1), outline = color, width = 1)
         dst_path = os.path.join(dst_dir, name_key + "_{}.png".format(b))
@@ -203,18 +204,21 @@ def visualize(rects_list, image_list, pos_classes, dst_dir, name_key):
         print(dst_path)
 
 # classについてはsoftmaxで正規化済である想定
-def feat2rects(feat_dict, stride_keys, pos_classes, siz_vec, asp_vec, prob_th):
+def feat2rects(feat_dict, stride_vec, pos_classes, siz_vec, asp_vec, prob_th):
     all_out = None
 
     anchor_num = siz_vec.size * asp_vec.size
-    for stride_key in stride_keys:
+    for stride in stride_vec:
         # 特定のスケール特徴量マップのバッチ
-        batched_feat = jnp.array(feat_dict[stride_key])
-        batch_size, feat_h, feat_w, feat_ch = batched_feat.shape
+        stride_key = "a{}".format(stride)
+        batched_feat = feat_dict[stride_key]
+        pos, pos_valid, cls, cls_valid = batched_feat
+        batch_size, feat_h, feat_w, siz, asp, _ = pos.shape
         all_class_num = 1 + len(pos_classes)
+        '''
         vecsize_per_anchor = 4 + all_class_num
         assert(feat_ch == anchor_num * vecsize_per_anchor)
-
+        '''
         # initialize output (only once)
         if all_out is None:
             all_out = []
@@ -224,36 +228,32 @@ def feat2rects(feat_dict, stride_keys, pos_classes, siz_vec, asp_vec, prob_th):
                     out_dict[pos_class] = []
                 all_out.append(out_dict)
 
-        for b, feat_img in enumerate(batched_feat):
-            feat_img = feat_img.reshape((feat_h, feat_w, siz_vec.size, asp_vec.size, vecsize_per_anchor))
-            split_feat_img = np.split(feat_img, [4], axis = -1)
-            pos_feat, cls_prob = split_feat_img[0], split_feat_img[1]
-            assert(pos_feat.shape == (feat_h, feat_w, siz_vec.size, asp_vec.size, 4))
-            assert(cls_prob.shape == (feat_h, feat_w, siz_vec.size, asp_vec.size, all_class_num))
-            positive_cls_prob = cls_prob[:,:,:,:,1:] # remove negative probability
-            max_positive_prob = np.max(positive_cls_prob, axis = -1)
-            max_positive_idx  = np.argmax(positive_cls_prob, axis = -1)
+        assert(pos.shape == (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, 4))
+        assert(cls.shape == (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, all_class_num))
+        positive_cls = cls[:,:,:,:,:,1:] # remove negative probability
+        max_positive_prob = np.max(positive_cls, axis = -1)
+        max_positive_idx  = np.argmax(positive_cls, axis = -1)
 
-            base_yc = (np.arange(feat_h) + 0.5) / feat_h
-            base_yc = np.tile(base_yc.reshape(-1, 1), (1, feat_w))
-            base_xc = (np.arange(feat_w) + 0.5) / feat_w
-            base_xc = np.tile(base_xc.reshape(1, -1), (feat_h, 1))
-            assert(base_yc.shape == base_xc.shape)
-
+        base_yc = (np.arange(feat_h) + 0.5) / feat_h
+        base_yc = np.tile(base_yc.reshape(-1, 1), (1, feat_w))
+        base_xc = (np.arange(feat_w) + 0.5) / feat_w
+        base_xc = np.tile(base_xc.reshape(1, -1), (feat_h, 1))
+        assert(base_yc.shape == base_xc.shape)
+        for b in range(batch_size):
             for s, siz in enumerate(siz_vec):
                 for a, asp in enumerate(asp_vec):
                     base_h = (1.0 / feat_h) * siz * (asp ** (-0.5))
                     base_w = (1.0 / feat_w) * siz * (asp ** ( 0.5))
                     for y_idx in range(feat_h):
                         for x_idx in range(feat_w):
-                            max_prob = max_positive_prob[y_idx, x_idx, s, a]
+                            max_prob = max_positive_prob[b, y_idx, x_idx, s, a]
                             if max_prob > prob_th:
-                                f_yc, f_xc, f_h, f_w = pos_feat[y_idx, x_idx, s, a]
+                                f_yc, f_xc, f_h, f_w = pos[b, y_idx, x_idx, s, a]
                                 rect_h = base_h * np.exp(f_h)
                                 rect_w = base_w * np.exp(f_w)
                                 rect_yc = base_yc[y_idx, x_idx] + base_h * f_yc
                                 rect_xc = base_xc[y_idx, x_idx] + base_w * f_xc
-                                pos_class = pos_classes[max_positive_idx[y_idx, x_idx, s, a]]
+                                pos_class = pos_classes[max_positive_idx[b, y_idx, x_idx, s, a]]
                                 rect = [rect_yc, rect_xc, rect_h, rect_w]
                                 all_out[b][pos_class].append(rect)
     return all_out
@@ -387,6 +387,31 @@ def make_batch_getter(dataset, rng, pos_classes, batch_size, siz_vec, asp_vec, i
         for stride in [2, 4, 8, 16, 32]:
             labels["a{}".format(stride)] = rects2feat(batched_labels, pos_classes, siz_vec, asp_vec, img_h // stride, img_w // stride)
         yield images, labels
+
+def encdec_test():
+    rng = jax.random.PRNGKey(0)
+    ANCHOR_SIZ_NUM = 3
+    siz_vec = 2 ** (np.arange(ANCHOR_SIZ_NUM) / ANCHOR_SIZ_NUM)
+    ANCHOR_ASP_MAX = 2.0
+    ANCHOR_ASP_NUM = 3
+    asp_vec = ANCHOR_ASP_MAX ** np.linspace(-1, 1, ANCHOR_ASP_NUM)
+    pos_classes = ["car", "person"]
+    #all_class_num = 1 + len(pos_classes)
+    img_h = 128
+    img_w = 256
+    batch_size = 4
+    dataset = CityScapes(r"/mnt/hdd/dataset/cityscapes", rng, img_h, img_w)
+    batch_gen = dataset.make_generator( "test",
+                                        label_txt_list = pos_classes,
+                                        batch_size = batch_size)
+    for i in range(10):
+        images, batched_labels = next(batch_gen)
+        feat_dict = {}
+        stride_vec = [2, 4, 8, 16, 32]
+        for stride in stride_vec:
+            feat_dict["a{}".format(stride)] = rects2feat(batched_labels, pos_classes, siz_vec, asp_vec, img_h // stride, img_w // stride)
+        batched_rects = feat2rects(feat_dict, stride_vec, pos_classes, siz_vec, asp_vec, 0.5)
+        visualize(batched_rects, images, pos_classes, "eval", str(i))
 
 if "__main__" == __name__:
     main()
