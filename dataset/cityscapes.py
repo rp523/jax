@@ -152,6 +152,7 @@ class CityScapes:
                 tgt = train_type_dict[key]
                 assert("left" in tgt.keys())
 
+                # fix augumentation setting
                 flip = False
                 if aug_flip:
                     self.__rng, rng = jax.random.split(self.__rng)
@@ -175,8 +176,18 @@ class CityScapes:
     
                 left_path = tgt["left"]
                 left_pil = Image.open(left_path)
+                org_w, org_h = left_pil.shape
+                # crop augument
+                left_pil = left_pil.crop((int(crop_x0 * (org_w - 1)),
+                                          int(crop_y0 * (org_h - 1)),
+                                          int(crop_x1 * (org_w - 1)),
+                                          int(crop_y1 * (org_h - 1))))
                 left_pil = left_pil.resize((self.__img_w, self.__img_h))
                 left_arr = np.asarray(left_pil)
+                # flip augument
+                assert(left_arr.ndim == 3)
+                if flip:
+                    left_arr = left_arr[:,::-1,:]
                 left_arr = left_arr.reshape(   (1,
                                                 left_arr.shape[0],
                                                 left_arr.shape[1],
