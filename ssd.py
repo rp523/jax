@@ -388,6 +388,7 @@ def make_batch_getter(dataset, dataset_type, rng, pos_classes, batch_size, siz_v
                                         label_txt_list = pos_classes,
                                         batch_size = batch_size,
                                         aug_flip = True,
+                                        aug_noise = True,
                                         aug_crop_y0 = 0.25,
                                         aug_crop_y1 = 0.75,
                                         aug_crop_x0 = 0.25,
