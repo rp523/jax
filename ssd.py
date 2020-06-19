@@ -173,14 +173,12 @@ def main():
     trained_params = get_params(opt_state)  # list format
 
     PROB_TH = 0.9
-    test_batch_getter = make_batch_getter(dataset, "test", rng1, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w)
-    stride_keys = []
-    for stride in [2,4,8,16,32]:
-        stride_keys.append("a{}".format(stride))
+    test_batch_getter = make_batch_getter(dataset, "test", rng1, pos_classes, 1, siz_vec, asp_vec, img_h, img_w)
+    stride_vec = [2,4,8,16,32]
     for l in range(itrnum_in_epoch):
         x, y = next(test_batch_getter)
         preds = apply_fun(trained_params, x)
-        rects = feat2rects(preds, stride_keys, pos_classes, siz_vec, asp_vec, PROB_TH)
+        rects = feat2rects(preds, stride_vec, pos_classes, siz_vec, asp_vec, PROB_TH)
         visualize(rects, x, pos_classes, "vis", str(l))
 
     return trained_params
@@ -209,7 +207,6 @@ def visualize(rects_list, image_list, pos_classes, dst_dir, name_key):
         pil.save(dst_path)
         print(dst_path)
 
-# classについてはsoftmaxで正規化済である想定
 def feat2rects(feat_dict, stride_vec, pos_classes, siz_vec, asp_vec, prob_th):
     all_out = None
 
@@ -218,7 +215,17 @@ def feat2rects(feat_dict, stride_vec, pos_classes, siz_vec, asp_vec, prob_th):
         # 特定のスケール特徴量マップのバッチ
         stride_key = "a{}".format(stride)
         batched_feat = feat_dict[stride_key]
-        pos, pos_valid, cls, cls_valid = batched_feat
+        if batched_feat.ndim == 4:
+            # 推論結果
+            all_class_num = 1 + len(pos_classes)
+            b, h, w, ch = batched_feat.shape
+            batched_feat = batched_feat.reshape((b, h, w, siz_vec.size, asp_vec.size, 4 + all_class_num))
+            pos, cls = jnp.split(batched_feat, [4], axis = -1)
+            cls = jax.nn.softmax(cls)
+        else:
+            # 正解ラベルをそのまま読み込む
+            # classについてはsoftmaxで正規化済である想定
+            pos, pos_valid, cls, cls_valid = batched_feat
         batch_size, feat_h, feat_w, siz, asp, _ = pos.shape
         all_class_num = 1 + len(pos_classes)
         '''
@@ -245,23 +252,24 @@ def feat2rects(feat_dict, stride_vec, pos_classes, siz_vec, asp_vec, prob_th):
         base_xc = (np.arange(feat_w) + 0.5) / feat_w
         base_xc = np.tile(base_xc.reshape(1, -1), (feat_h, 1))
         assert(base_yc.shape == base_xc.shape)
-        for b in range(batch_size):
-            for s, siz in enumerate(siz_vec):
-                for a, asp in enumerate(asp_vec):
-                    base_h = (1.0 / feat_h) * siz * (asp ** (-0.5))
-                    base_w = (1.0 / feat_w) * siz * (asp ** ( 0.5))
-                    for y_idx in range(feat_h):
-                        for x_idx in range(feat_w):
-                            max_prob = max_positive_prob[b, y_idx, x_idx, s, a]
-                            if max_prob > prob_th:
-                                f_yc, f_xc, f_h, f_w = pos[b, y_idx, x_idx, s, a]
-                                rect_h = base_h * np.exp(f_h)
-                                rect_w = base_w * np.exp(f_w)
-                                rect_yc = base_yc[y_idx, x_idx] + base_h * f_yc
-                                rect_xc = base_xc[y_idx, x_idx] + base_w * f_xc
-                                pos_class = pos_classes[max_positive_idx[b, y_idx, x_idx, s, a]]
-                                rect = [rect_yc, rect_xc, rect_h, rect_w]
-                                all_out[b][pos_class].append(rect)
+        if (prob_th < max_positive_prob).any():
+            for b in range(batch_size):
+                for s, siz in enumerate(siz_vec):
+                    for a, asp in enumerate(asp_vec):
+                        base_h = (1.0 / feat_h) * siz * (asp ** (-0.5))
+                        base_w = (1.0 / feat_w) * siz * (asp ** ( 0.5))
+                        for y_idx in range(feat_h):
+                            for x_idx in range(feat_w):
+                                max_prob = max_positive_prob[b, y_idx, x_idx, s, a]
+                                if max_prob > prob_th:
+                                    f_yc, f_xc, f_h, f_w = pos[b, y_idx, x_idx, s, a]
+                                    rect_h = base_h * np.exp(f_h)
+                                    rect_w = base_w * np.exp(f_w)
+                                    rect_yc = base_yc[y_idx, x_idx] + base_h * f_yc
+                                    rect_xc = base_xc[y_idx, x_idx] + base_w * f_xc
+                                    pos_class = pos_classes[max_positive_idx[b, y_idx, x_idx, s, a]]
+                                    rect = [rect_yc, rect_xc, rect_h, rect_w]
+                                    all_out[b][pos_class].append(rect)
     return all_out
 
 # index処理があるので、jax.numpyではなくnumpyで
