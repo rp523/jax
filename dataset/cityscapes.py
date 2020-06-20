@@ -210,7 +210,8 @@ class CityScapes:
                 left_pil = left_pil.resize((self.__img_w, self.__img_h))
                 left_arr = np.asarray(left_pil)
                 # add noise
-                left_arr += noise
+                if aug_noise:
+                    left_arr += noise
                 # flip augument
                 assert(left_arr.ndim == 3)
                 if flip:
