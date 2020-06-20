@@ -3,16 +3,27 @@ import jax.random as jrandom
 
 class net_maker():
     
-    def __init__(self, prev_model = None):
+    def __init__(self):
         self.__names = []       # each layer's name
         self.__input_names = [] # each layer's input layer name
         # layer process substance
         self.__init_funs = []   # initialize-functions
         self.__apply_funs = []  # apply-functions
 
-        if prev_model is not None:  # given previously-defined model
-            self.__names, self.__input_names, self.__init_funs, self.__apply_funs = prev_model.get_layer_info()
-    
+    @staticmethod
+    def merge_models(model_list):
+        merged_model = net_maker()
+        for part_model in model_list:
+            merged_model.add_model(part_model)
+        return merged_model
+
+    def add_model(self, arg_model):
+        names, input_names, init_funs, apply_funs = arg_model.get_layer_info()
+        self.__names += names
+        self.__input_names += input_names
+        self.__init_funs += init_funs
+        self.__apply_funs += apply_funs
+
     def get_layer_info(self):
         return  self.__names, \
                 self.__input_names, \
@@ -40,7 +51,8 @@ class net_maker():
         else:
             assert(input_name in self.__names)
             return self.__names.index(input_name)
-    
+
+    @staticmethod    
     def weight_decay(params):
         ret = 0.0
         if isinstance(params, list) or isinstance(params, tuple):
@@ -53,7 +65,6 @@ class net_maker():
 
     def get_jax_model(self):
         n_layers = len(self.__init_funs)
-        input_shapes = [input]
 
         # initialize-function of whole model
         def init_fun(rng, input_shape):

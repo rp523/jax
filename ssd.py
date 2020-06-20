@@ -67,7 +67,7 @@ def CalcClass(anchor_num, pos_classes):
     return Conv(out_ch, (3, 3), (1, 1), padding = "SAME")
 
 def SSD(pos_classes, siz_vec, asp_vec):
-    net = net_maker(prev_model = RootResNet18())
+    net = net_maker()
     anchor_num = siz_vec.size * asp_vec.size
     net.add_layer(CalcPosition(anchor_num), input_name =  "f2", name =  "p2")
     net.add_layer(CalcPosition(anchor_num), input_name =  "f4", name =  "p4")
@@ -102,10 +102,24 @@ def main():
     batch_size = BATCH_SIZE
     stride_vec = [2,4,8,16,32]
     PROB_TH = 0.5
-    init_fun, apply_fun = SSD(pos_classes, siz_vec, asp_vec).get_jax_model()
+
+    # make model
+    root = RootResNet18()
+    ssd = SSD(pos_classes, siz_vec, asp_vec)
+    whole_model = net_maker.merge_models([root, ssd])
+    init_fun, apply_fun = whole_model.get_jax_model()
 
     rng1, rng = jax.random.split(rng)
     _, init_params = init_fun(rng1, (batch_size, img_h, img_w, 3))
+
+    '''
+    # パラメータの部分生成
+    rng1, rng = jax.random.split(rng)
+    init_fun1, apply_fun1 = root.get_jax_model()
+    _, init_params1 = init_fun1(rng1, (batch_size, img_h, img_w, 3))
+    init_params[:len(init_params1)] = init_params1
+    '''
+
     opt_init, opt_update, get_params = optimizers.adam(1E-5)
     
     rng1, rng = jax.random.split(rng)
