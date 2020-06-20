@@ -82,7 +82,7 @@ def SSD(pos_classes, siz_vec, asp_vec):
     return net
 
 def main():
-    BATCH_SIZE = 12
+    BATCH_SIZE = 25
     fori_num = 1
     SEED = 0
     EPOCH_NUM = 500
