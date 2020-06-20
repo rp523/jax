@@ -82,7 +82,7 @@ def SSD(pos_classes, siz_vec, asp_vec):
     return net
 
 def main():
-    BATCH_SIZE = 12
+    BATCH_SIZE = 1
     SEED = 0
     EPOCH_NUM = 500
 
@@ -189,7 +189,8 @@ def main():
         x, y = next(test_batch_getter)
         preds = apply_fun(trained_params, x)
         rects = feat2rects(preds, stride_vec, pos_classes, siz_vec, asp_vec, PROB_TH)
-        visualize(rects, x, pos_classes, "vis", str(l))
+        visualize(rects, x, pos_classes, "vis", "pred{}".format(l))
+        print(loss(trained_params, x, y))
 
     return trained_params
 
@@ -235,15 +236,18 @@ def feat2rects(feat_dict, stride_vec, pos_classes, siz_vec, asp_vec, prob_th):
             # 推論結果
             pos = feat_dict["p{}".format(stride)]
             cls = feat_dict["c{}".format(stride)]
-        batch_size = pos.shape.shape[0]
-        feat_h = pos.shape.shape[1]
-        feat_w = pos.shape.shape[2]
+        batch_size = pos.shape[0]
+        feat_h = pos.shape[1]
+        feat_w = pos.shape[2]
         assert(batch_size == cls.shape[0])
         assert(feat_h == cls.shape[1])
         assert(feat_w == cls.shape[2])
-        pos = np.array(pos).reshape((batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, 4))
-        cls = np.array(cls).reshape((batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, all_class_num))
-        cls = jax.nn.softmax(cls)
+        pos = pos.reshape((batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, 4))
+        cls = cls.reshape((batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, all_class_num))
+        if "c{}".format(stride) in feat_dict.keys():
+            cls = jax.nn.softmax(cls)
+        pos = np.array(pos)
+        cls = np.array(cls)
 
         '''
         vecsize_per_anchor = 4 + all_class_num
@@ -292,7 +296,7 @@ def feat2rects(feat_dict, stride_vec, pos_classes, siz_vec, asp_vec, prob_th):
     return all_out
 
 # index処理があるので、jax.numpyではなくnumpyで
-def rects2feat(batched_annots, pos_classes, siz_vec, asp_vec, feat_h, feat_w):
+def rects2scaledfeat(batched_annots, pos_classes, siz_vec, asp_vec, feat_h, feat_w):
     POS_IOU_TH = 0.5
     NEG_IOU_TH = 0.4
     batch_size = len(batched_annots)
@@ -422,12 +426,17 @@ def make_batch_getter(dataset, dataset_type, rng, pos_classes, batch_size, siz_v
                                         aug_crop_x1 = 0.75,
     )
 
+    stride_vec = [2,4,8,16,32]
     while True:
         images, batched_labels = next(batch_gen)
-        labels = {}
-        for stride in [2, 4, 8, 16, 32]:
-            labels["a{}".format(stride)] = rects2feat(batched_labels, pos_classes, siz_vec, asp_vec, img_h // stride, img_w // stride)
+        labels = rects2feat(batched_labels, stride_vec, pos_classes, siz_vec, asp_vec, img_h, img_w)
         yield images, labels
+
+def rects2feat(batched_labels, stride_vec, pos_classes, siz_vec, asp_vec, img_h, img_w):
+    labels = {}
+    for stride in stride_vec:
+        labels["a{}".format(stride)] = rects2scaledfeat(batched_labels, pos_classes, siz_vec, asp_vec, img_h // stride, img_w // stride)
+    return labels
 
 # 学習とは別に、データのエンコード/デコードが正しいか確認
 def label_encdec_test():
@@ -454,10 +463,8 @@ def label_encdec_test():
                                         )
     for i in range(100):
         images, batched_labels = next(batch_gen)
-        feat_dict = {}
         stride_vec = [2, 4, 8, 16, 32]
-        for stride in stride_vec:
-            feat_dict["a{}".format(stride)] = rects2feat(batched_labels, pos_classes, siz_vec, asp_vec, img_h // stride, img_w // stride)
+        feat_dict = rects2feat(batched_labels, stride_vec, pos_classes, siz_vec, asp_vec, img_h, img_w)
         batched_rects = feat2rects(feat_dict, stride_vec, pos_classes, siz_vec, asp_vec, 0.5)
         visualize(batched_rects, images, pos_classes, "eval", str(i))
 
