@@ -83,7 +83,7 @@ def SSD(pos_classes, siz_vec, asp_vec):
 
 def main():
     BATCH_SIZE = 12
-    fori_num = 16
+    fori_num = 1
     SEED = 0
     EPOCH_NUM = 500
 
@@ -170,9 +170,9 @@ def main():
         for l in range(itrnum_in_epoch // fori_num):
             # fori_loopまではメモリオーバーでjit化できない
             # 内容は以下のfor文と等価
-            #for i in range(cnt, cnt + fori_num):
-            #    loss_val, opt_state = body_fun(i, (loss_val, opt_state))
-            loss_val, opt_state = jax.lax.fori_loop(cnt, cnt + fori_num, body_fun, (loss_val, opt_state))
+            for i in range(cnt, cnt + fori_num):
+                loss_val, opt_state = body_fun(i, (loss_val, opt_state))
+            #loss_val, opt_state = jax.lax.fori_loop(cnt, cnt + fori_num, body_fun, (loss_val, opt_state))
             cnt += fori_num
             t = time.time()
             print(  "epoch=[{}/{}]".format(e + 1, EPOCH_NUM),
