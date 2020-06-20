@@ -82,7 +82,8 @@ def SSD(pos_classes, siz_vec, asp_vec):
     return net
 
 def main():
-    BATCH_SIZE = 1
+    BATCH_SIZE = 12
+    fori_num = 16
     SEED = 0
     EPOCH_NUM = 500
 
@@ -158,7 +159,6 @@ def main():
     opt_state = opt_init(init_params)
     itrnum_in_epoch = dataset.itrnum_in_epoch("train", batch_size)
     cnt = 0
-    fori_num = 16
     loss_val = 0.0
     def body_fun(idx, old_info):
         _, opt_state = old_info
