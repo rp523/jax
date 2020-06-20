@@ -57,20 +57,32 @@ def RootResNet18():
     net.add_layer(StrideBlock(512, 512, 3), name = "f32")           # stride = 32
     return net
 
+def CalcPosition(anchor_num):
+    out_ch = anchor_num * 4
+    return Conv(out_ch, (3, 3), (1, 1), padding = "SAME")
+
+def CalcClass(anchor_num, pos_classes):
+    all_class_num = 1 + len(pos_classes)
+    out_ch = anchor_num * all_class_num
+    return Conv(out_ch, (3, 3), (1, 1), padding = "SAME")
+
 def SSD(pos_classes, siz_vec, asp_vec):
     net = net_maker(prev_model = RootResNet18())
     anchor_num = siz_vec.size * asp_vec.size
-    anchor_out = 4 + (1 + len(pos_classes)) # position of rect + classify
-    out_ch = anchor_num * anchor_out
-    net.add_layer(  Conv(out_ch, (3, 3), (1, 1), padding = "SAME"), input_name =  "f2", name =  "a2")
-    net.add_layer(  Conv(out_ch, (3, 3), (1, 1), padding = "SAME"), input_name =  "f4", name =  "a4")
-    net.add_layer(  Conv(out_ch, (3, 3), (1, 1), padding = "SAME"), input_name =  "f8", name =  "a8")
-    net.add_layer(  Conv(out_ch, (3, 3), (1, 1), padding = "SAME"), input_name = "f16", name = "a16")
-    net.add_layer(  Conv(out_ch, (3, 3), (1, 1), padding = "SAME"), input_name = "f32", name = "a32")
+    net.add_layer(CalcPosition(anchor_num), input_name =  "f2", name =  "p2")
+    net.add_layer(CalcPosition(anchor_num), input_name =  "f4", name =  "p4")
+    net.add_layer(CalcPosition(anchor_num), input_name =  "f8", name =  "p8")
+    net.add_layer(CalcPosition(anchor_num), input_name = "f16", name = "p16")
+    net.add_layer(CalcPosition(anchor_num), input_name = "f32", name = "p32")
+    net.add_layer(CalcClass(anchor_num, pos_classes), input_name =  "f2", name =  "c2")
+    net.add_layer(CalcClass(anchor_num, pos_classes), input_name =  "f4", name =  "c4")
+    net.add_layer(CalcClass(anchor_num, pos_classes), input_name =  "f8", name =  "c8")
+    net.add_layer(CalcClass(anchor_num, pos_classes), input_name = "f16", name = "c16")
+    net.add_layer(CalcClass(anchor_num, pos_classes), input_name = "f32", name = "c32")
     return net
 
 def main():
-    BATCH_SIZE = 12
+    BATCH_SIZE = 1
     SEED = 0
     EPOCH_NUM = 500
 
@@ -87,6 +99,8 @@ def main():
     img_h = 128
     img_w = 256
     batch_size = BATCH_SIZE
+    stride_vec = [2,4,8,16,32]
+    PROB_TH = 0.5
     init_fun, apply_fun = SSD(pos_classes, siz_vec, asp_vec).get_jax_model()
 
     rng1, rng = jax.random.split(rng)
@@ -107,25 +121,20 @@ def main():
             return (0.5 * x ** 2) * (jnp.abs(x) < 1) + (jnp.abs(x) - 0.5) * (jnp.abs(x) >= 1)
         out = 0.0
         for stride in [2,4,8,16,32]:
-            key = "a{}".format(stride)
-            pred = preds[key]
-            b, h, w, _ = pred.shape
-            pred = pred.reshape((b, h, w, siz_vec.size, asp_vec.size, 4 + all_class_num))
-            pred_pos, pred_cls_logit = jnp.split(pred, [4], axis = -1)
-            pos, pos_valid, cls, cls_valid = y[key]
+            feat_h = img_h // stride
+            feat_w = img_w // stride
+            pred_pos = preds["p{}".format(stride)]
+            pred_pos = pred_pos.reshape((BATCH_SIZE, feat_h, feat_w, siz_vec.size, asp_vec.size, 4))
+            pred_cls = preds["c{}".format(stride)]
+            pred_cls = pred_cls.reshape((BATCH_SIZE, feat_h, feat_w, siz_vec.size, asp_vec.size, all_class_num))
+            pred_cls = jax.nn.softmax(pred_cls)
 
-            b, h, w, s, a = pos_valid.shape
-            pos_valid = pos_valid.reshape(b, h, w, s, a, 1)
-            assert(pred_pos.shape == (b, h, w, s, a, 4))
+            pos, pos_valid, cls, cls_valid = y["a{}".format(stride)]
+            pos_valid = pos_valid.reshape(BATCH_SIZE, feat_h, feat_w, siz_vec.size, asp_vec.size, 1)
             out += (POS_ALPHA * smooth_l1(pred_pos - pos) * pos_valid).sum()
-
-            #assert(cls.min() >= 0.0)
-            #assert(cls.max() <= 1.0)
-            pred_cls = jax.nn.softmax(pred_cls_logit, axis = -1)
-            assert(pred_cls.shape == (b, h, w, s, a, all_class_num))
-            b, h, w, s, a = cls_valid.shape
-            cls_valid = cls_valid.reshape(b, h, w, s, a, 1)
+            cls_valid = cls_valid.reshape(BATCH_SIZE, feat_h, feat_w, siz_vec.size, asp_vec.size, 1)
             out += (- cls * ((1.0 - pred_cls) ** FOCAL_GAMMA) * jnp.log(pred_cls + 1E-10) * cls_valid).sum()
+
         # batch average
         out /= x.shape[0]
 
@@ -140,8 +149,10 @@ def main():
         loss_val, grad_val = value_and_grad(loss)(params, x, y)
         return loss_val, opt_update(cnt, grad_val, opt_state)
 
-    src_dir = os.path.join("../ssd_checkpoint", "epoch{}".format(0))
+    src_dir = os.path.join("ssd_checkpoint", "epoch{}".format(0))
+    src_dir = os.path.abspath(src_dir)
     if os.path.exists(src_dir):
+        print("FOUND INITIAL WEIGHT")
         init_params = CheckPoint.load_params(init_params, src_dir)
 
     opt_state = opt_init(init_params)
@@ -158,6 +169,9 @@ def main():
     for e in range(EPOCH_NUM):
         for l in range(itrnum_in_epoch // fori_num):
             # fori_loopまではメモリオーバーでjit化できない
+            # 内容は以下のfor文と等価
+            #for i in range(cnt, cnt + fori_num):
+            #    loss_val, opt_state = body_fun(i, (loss_val, opt_state))
             loss_val, opt_state = jax.lax.fori_loop(cnt, cnt + fori_num, body_fun, (loss_val, opt_state))
             cnt += fori_num
             t = time.time()
@@ -166,22 +180,23 @@ def main():
                     "{:.1f}ms".format(1000 * (t - t0)),
                     loss_val)
             t0 = t
-        dst_dir = os.path.join("../ssd_checkpoint", "epoch{}".format(e + 1))
+        dst_dir = os.path.join("ssd_checkpoint", "epoch{}".format(e + 1))
         if not os.path.exists(dst_dir):
             os.makedirs(dst_dir)
         CheckPoint.save_params(get_params(opt_state), dst_dir)
-    trained_params = get_params(opt_state)  # list format
 
-    PROB_TH = 0.9
-    test_batch_getter = make_batch_getter(dataset, "test", rng1, pos_classes, batch_size, siz_vec, asp_vec, img_h, img_w)
-    stride_keys = []
-    for stride in [2,4,8,16,32]:
-        stride_keys.append("a{}".format(stride))
+    trainded_dir = "/home/isgsktyktt/work/ssd_checkpoint/epoch0"
+    assert(os.path.exists(trainded_dir))
+    trained_params = CheckPoint.load_params(init_params, trainded_dir)
+
+    test_batch_getter = make_batch_getter(dataset, "train", rng1, pos_classes, 1, siz_vec, asp_vec, img_h, img_w)
+    stride_vec = [2,4,8,16,32]
     for l in range(itrnum_in_epoch):
         x, y = next(test_batch_getter)
         preds = apply_fun(trained_params, x)
-        rects = feat2rects(preds, stride_keys, pos_classes, siz_vec, asp_vec, PROB_TH)
-        visualize(rects, x, pos_classes, "vis", str(l))
+        rects = feat2rects(preds, stride_vec, pos_classes, siz_vec, asp_vec, PROB_TH)
+        visualize(rects, x, pos_classes, "vis", "pred{}".format(l))
+        print(loss(trained_params, x, y))
 
     return trained_params
 
@@ -190,7 +205,7 @@ def visualize(rects_list, image_list, pos_classes, dst_dir, name_key):
         os.makedirs(dst_dir)
     dst_dir = os.path.abspath(dst_dir)
     for b, (image, rects_dict) in enumerate(zip(image_list, rects_list)):
-        pil = Image.fromarray(image.astype(jnp.uint8))
+        pil = Image.fromarray(image.astype(np.uint8))
         img_w, img_h = pil.size
         dr = ImageDraw.Draw(pil)
         for c, pos_class in enumerate(pos_classes):
@@ -209,18 +224,37 @@ def visualize(rects_list, image_list, pos_classes, dst_dir, name_key):
         pil.save(dst_path)
         print(dst_path)
 
-# classについてはsoftmaxで正規化済である想定
 def feat2rects(feat_dict, stride_vec, pos_classes, siz_vec, asp_vec, prob_th):
     all_out = None
 
+    all_class_num = 1 + len(pos_classes)
     anchor_num = siz_vec.size * asp_vec.size
     for stride in stride_vec:
-        # 特定のスケール特徴量マップのバッチ
-        stride_key = "a{}".format(stride)
-        batched_feat = feat_dict[stride_key]
-        pos, pos_valid, cls, cls_valid = batched_feat
-        batch_size, feat_h, feat_w, siz, asp, _ = pos.shape
-        all_class_num = 1 + len(pos_classes)
+        if "a{}".format(stride) in feat_dict.keys():
+            assert(not "p{}".format(stride) in feat_dict.keys())
+            assert(not "c{}".format(stride) in feat_dict.keys())
+            # 正解ラベルをそのまま読み込む
+            # classについてはsoftmaxで正規化済である想定
+            pos, pos_valid, cls, cls_valid = feat_dict["a{}".format(stride)]
+        else:
+            assert("p{}".format(stride) in feat_dict.keys())
+            assert("c{}".format(stride) in feat_dict.keys())
+            # 推論結果
+            pos = feat_dict["p{}".format(stride)]
+            cls = feat_dict["c{}".format(stride)]
+        batch_size = pos.shape[0]
+        feat_h = pos.shape[1]
+        feat_w = pos.shape[2]
+        assert(batch_size == cls.shape[0])
+        assert(feat_h == cls.shape[1])
+        assert(feat_w == cls.shape[2])
+        pos = pos.reshape((batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, 4))
+        cls = cls.reshape((batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, all_class_num))
+        if "c{}".format(stride) in feat_dict.keys():
+            cls = jax.nn.softmax(cls)
+        pos = np.array(pos)
+        cls = np.array(cls)
+
         '''
         vecsize_per_anchor = 4 + all_class_num
         assert(feat_ch == anchor_num * vecsize_per_anchor)
@@ -240,32 +274,35 @@ def feat2rects(feat_dict, stride_vec, pos_classes, siz_vec, asp_vec, prob_th):
         max_positive_prob = np.max(positive_cls, axis = -1)
         max_positive_idx  = np.argmax(positive_cls, axis = -1)
 
-        base_yc = (np.arange(feat_h) + 0.5) / feat_h
-        base_yc = np.tile(base_yc.reshape(-1, 1), (1, feat_w))
-        base_xc = (np.arange(feat_w) + 0.5) / feat_w
-        base_xc = np.tile(base_xc.reshape(1, -1), (feat_h, 1))
-        assert(base_yc.shape == base_xc.shape)
+        base_yc_mat = (np.arange(feat_h) + 0.5) / feat_h
+        base_yc_mat = np.tile(base_yc_mat.reshape((feat_h, 1, 1, 1)), (1, feat_w, siz_vec.size, asp_vec.size))
+        base_xc_mat = (np.arange(feat_w) + 0.5) / feat_w
+        base_xc_mat = np.tile(base_xc_mat.reshape((1, feat_w, 1, 1)), (feat_h, 1, siz_vec.size, asp_vec.size))
+        base_h_mat  = (1.0 / feat_h) * siz_vec.reshape((-1, 1)) * asp_vec.reshape((1, -1)) ** (-0.5)
+        base_h_mat  = np.tile( base_h_mat.reshape((1, 1, siz_vec.size, asp_vec.size)), (feat_h, feat_w, 1, 1))
+        base_w_mat  = (1.0 / feat_w) * siz_vec.reshape((-1, 1)) * asp_vec.reshape((1, -1)) ** ( 0.5)
+        base_w_mat  = np.tile( base_w_mat.reshape((1, 1, siz_vec.size, asp_vec.size)), (feat_h, feat_w, 1, 1))
+
         for b in range(batch_size):
-            for s, siz in enumerate(siz_vec):
-                for a, asp in enumerate(asp_vec):
-                    base_h = (1.0 / feat_h) * siz * (asp ** (-0.5))
-                    base_w = (1.0 / feat_w) * siz * (asp ** ( 0.5))
-                    for y_idx in range(feat_h):
-                        for x_idx in range(feat_w):
-                            max_prob = max_positive_prob[b, y_idx, x_idx, s, a]
-                            if max_prob > prob_th:
-                                f_yc, f_xc, f_h, f_w = pos[b, y_idx, x_idx, s, a]
-                                rect_h = base_h * np.exp(f_h)
-                                rect_w = base_w * np.exp(f_w)
-                                rect_yc = base_yc[y_idx, x_idx] + base_h * f_yc
-                                rect_xc = base_xc[y_idx, x_idx] + base_w * f_xc
-                                pos_class = pos_classes[max_positive_idx[b, y_idx, x_idx, s, a]]
-                                rect = [rect_yc, rect_xc, rect_h, rect_w]
-                                all_out[b][pos_class].append(rect)
+            is_detected = (prob_th < max_positive_prob)[b]
+            if is_detected.any():
+                for ((f_yc, f_xc, f_h, f_w), base_yc, base_xc, base_h, base_w, posclsidx) in zip(   pos[b][is_detected],
+                                                                                                    base_yc_mat[is_detected],
+                                                                                                    base_xc_mat[is_detected],
+                                                                                                    base_h_mat[is_detected],
+                                                                                                    base_w_mat[is_detected],
+                                                                                                    max_positive_idx[b][is_detected]):
+                    rect_yc = base_yc + base_h * f_yc
+                    rect_xc = base_xc + base_w * f_xc
+                    rect_h = base_h * np.exp(f_h)
+                    rect_w = base_w * np.exp(f_w)
+                    pos_class = pos_classes[posclsidx]
+                    rect = [rect_yc, rect_xc, rect_h, rect_w]
+                    all_out[b][pos_class].append(rect)
     return all_out
 
 # index処理があるので、jax.numpyではなくnumpyで
-def rects2feat(batched_annots, pos_classes, siz_vec, asp_vec, feat_h, feat_w):
+def rects2scaledfeat(batched_annots, pos_classes, siz_vec, asp_vec, feat_h, feat_w):
     POS_IOU_TH = 0.5
     NEG_IOU_TH = 0.4
     batch_size = len(batched_annots)
@@ -342,10 +379,10 @@ def rects2feat(batched_annots, pos_classes, siz_vec, asp_vec, feat_h, feat_w):
     all_class_num = 1 + len(pos_classes)
     out_cls = np.eye(all_class_num, dtype = np.float32)[out_cls]
     assert(out_cls.shape == (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, all_class_num))
-    pos_valid = (POS_IOU_TH <= all_iou) # only positive
-    cls_valid = np.logical_or(all_iou < NEG_IOU_TH, POS_IOU_TH <= all_iou) # positive & negative
+    out_pos_valid = (POS_IOU_TH <= all_iou) # only positive
+    out_cls_valid = np.logical_or(all_iou < NEG_IOU_TH, POS_IOU_TH <= all_iou) # positive & negative
 
-    return out_pos, pos_valid, out_cls, cls_valid
+    return out_pos, out_pos_valid, out_cls, out_cls_valid
 
 def calc_iou(base_y0, base_y1, base_x0, base_x1, base_h, base_w,
                 y0, y1, x0, x1, h, w):
@@ -395,12 +432,17 @@ def make_batch_getter(dataset, dataset_type, rng, pos_classes, batch_size, siz_v
                                         aug_crop_x1 = 0.75,
     )
 
+    stride_vec = [2,4,8,16,32]
     while True:
         images, batched_labels = next(batch_gen)
-        labels = {}
-        for stride in [2, 4, 8, 16, 32]:
-            labels["a{}".format(stride)] = rects2feat(batched_labels, pos_classes, siz_vec, asp_vec, img_h // stride, img_w // stride)
+        labels = rects2feat(batched_labels, stride_vec, pos_classes, siz_vec, asp_vec, img_h, img_w)
         yield images, labels
+
+def rects2feat(batched_labels, stride_vec, pos_classes, siz_vec, asp_vec, img_h, img_w):
+    labels = {}
+    for stride in stride_vec:
+        labels["a{}".format(stride)] = rects2scaledfeat(batched_labels, pos_classes, siz_vec, asp_vec, img_h // stride, img_w // stride)
+    return labels
 
 # 学習とは別に、データのエンコード/デコードが正しいか確認
 def label_encdec_test():
@@ -427,10 +469,8 @@ def label_encdec_test():
                                         )
     for i in range(100):
         images, batched_labels = next(batch_gen)
-        feat_dict = {}
         stride_vec = [2, 4, 8, 16, 32]
-        for stride in stride_vec:
-            feat_dict["a{}".format(stride)] = rects2feat(batched_labels, pos_classes, siz_vec, asp_vec, img_h // stride, img_w // stride)
+        feat_dict = rects2feat(batched_labels, stride_vec, pos_classes, siz_vec, asp_vec, img_h, img_w)
         batched_rects = feat2rects(feat_dict, stride_vec, pos_classes, siz_vec, asp_vec, 0.5)
         visualize(batched_rects, images, pos_classes, "eval", str(i))
 
