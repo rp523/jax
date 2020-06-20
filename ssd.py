@@ -64,8 +64,7 @@ def CalcPosition(anchor_num):
 def CalcClass(anchor_num, pos_classes):
     all_class_num = 1 + len(pos_classes)
     out_ch = anchor_num * all_class_num
-    return stax.serial( Conv(out_ch, (3, 3), (1, 1), padding = "SAME"),
-                        Softmax)
+    return Conv(out_ch, (3, 3), (1, 1), padding = "SAME")
 
 def SSD(pos_classes, siz_vec, asp_vec):
     net = net_maker(prev_model = RootResNet18())
@@ -126,6 +125,7 @@ def main():
             pred_pos = pred_pos.reshape((BATCH_SIZE, feat_h, feat_w, siz_vec.size, asp_vec.size, 4))
             pred_cls = preds["c{}".format(stride)]
             pred_cls = pred_cls.reshape((BATCH_SIZE, feat_h, feat_w, siz_vec.size, asp_vec.size, all_class_num))
+            pred_cls = jax.nn.softmax(pred_cls)
 
             pos, pos_valid, cls, cls_valid = y["a{}".format(stride)]
             pos_valid = pos_valid.reshape(BATCH_SIZE, feat_h, feat_w, siz_vec.size, asp_vec.size, 1)
@@ -220,6 +220,7 @@ def visualize(rects_list, image_list, pos_classes, dst_dir, name_key):
 def feat2rects(feat_dict, stride_vec, pos_classes, siz_vec, asp_vec, prob_th):
     all_out = None
 
+    all_class_num = 1 + len(pos_classes)
     anchor_num = siz_vec.size * asp_vec.size
     for stride in stride_vec:
         if "a{}".format(stride) in feat_dict.keys():
@@ -234,11 +235,16 @@ def feat2rects(feat_dict, stride_vec, pos_classes, siz_vec, asp_vec, prob_th):
             # 推論結果
             pos = feat_dict["p{}".format(stride)]
             cls = feat_dict["c{}".format(stride)]
-        pos = np.array(pos)
-        cls = np.array(cls)
+        batch_size = pos.shape.shape[0]
+        feat_h = pos.shape.shape[1]
+        feat_w = pos.shape.shape[2]
+        assert(batch_size == cls.shape[0])
+        assert(feat_h == cls.shape[1])
+        assert(feat_w == cls.shape[2])
+        pos = np.array(pos).reshape((batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, 4))
+        cls = np.array(cls).reshape((batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, all_class_num))
+        cls = jax.nn.softmax(cls)
 
-        batch_size, feat_h, feat_w, siz, asp, _ = pos.shape
-        all_class_num = 1 + len(pos_classes)
         '''
         vecsize_per_anchor = 4 + all_class_num
         assert(feat_ch == anchor_num * vecsize_per_anchor)
