@@ -1,6 +1,7 @@
 #coding: utf-8
 import numpy as np
 import os, time
+import pickle
 from PIL import Image, ImageDraw
 
 import jax
@@ -14,7 +15,6 @@ from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
                                     MaxPool, Relu, LogSoftmax, Softmax, elementwise)
 from model.maker.model_maker import net_maker
 from dataset.cityscapes import CityScapes
-from checkpoint import CheckPoint
 COLOR_LIST = [  (255,0,0),
                 (0,255,0),
                 (0,0,255),
@@ -82,7 +82,8 @@ def SSD(pos_classes, siz_vec, asp_vec):
     return net
 
 def main():
-    BATCH_SIZE = 1
+    BATCH_SIZE = 12
+    fori_num = 1
     SEED = 0
     EPOCH_NUM = 500
 
@@ -149,16 +150,15 @@ def main():
         loss_val, grad_val = value_and_grad(loss)(params, x, y)
         return loss_val, opt_update(cnt, grad_val, opt_state)
 
-    src_dir = os.path.join("ssd_checkpoint", "epoch{}".format(0))
-    src_dir = os.path.abspath(src_dir)
-    if os.path.exists(src_dir):
+    load_param_path = os.path.join("ssd_checkpoint", "epoch{}.bin".format(0))
+    if os.path.exists(load_param_path):
+        with open(load_param_path, "rb") as f:
+            init_params = pickle.load(f)
         print("FOUND INITIAL WEIGHT")
-        init_params = CheckPoint.load_params(init_params, src_dir)
 
     opt_state = opt_init(init_params)
     itrnum_in_epoch = dataset.itrnum_in_epoch("train", batch_size)
     cnt = 0
-    fori_num = 16
     loss_val = 0.0
     def body_fun(idx, old_info):
         _, opt_state = old_info
@@ -170,9 +170,9 @@ def main():
         for l in range(itrnum_in_epoch // fori_num):
             # fori_loopまではメモリオーバーでjit化できない
             # 内容は以下のfor文と等価
-            #for i in range(cnt, cnt + fori_num):
-            #    loss_val, opt_state = body_fun(i, (loss_val, opt_state))
-            loss_val, opt_state = jax.lax.fori_loop(cnt, cnt + fori_num, body_fun, (loss_val, opt_state))
+            for i in range(cnt, cnt + fori_num):
+                loss_val, opt_state = body_fun(i, (loss_val, opt_state))
+            #loss_val, opt_state = jax.lax.fori_loop(cnt, cnt + fori_num, body_fun, (loss_val, opt_state))
             cnt += fori_num
             t = time.time()
             print(  "epoch=[{}/{}]".format(e + 1, EPOCH_NUM),
@@ -180,10 +180,12 @@ def main():
                     "{:.1f}ms".format(1000 * (t - t0)),
                     loss_val)
             t0 = t
-        dst_dir = os.path.join("ssd_checkpoint", "epoch{}".format(e + 1))
+        dst_dir = "ssd_checkpoint"
         if not os.path.exists(dst_dir):
             os.makedirs(dst_dir)
-        CheckPoint.save_params(get_params(opt_state), dst_dir)
+        dst_path = os.path.join(dst_dir, "epoch{}.bin".format(e + 1))
+        with open(dst_path, "wb") as f:
+            pickle.dump(get_params(opt_state), f)
 
     trainded_dir = "/home/isgsktyktt/work/ssd_checkpoint/epoch0"
     assert(os.path.exists(trainded_dir))
