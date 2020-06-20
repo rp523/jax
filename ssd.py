@@ -187,9 +187,10 @@ def main():
         with open(dst_path, "wb") as f:
             pickle.dump(get_params(opt_state), f)
 
-    trainded_dir = "/home/isgsktyktt/work/ssd_checkpoint/epoch0"
-    assert(os.path.exists(trainded_dir))
-    trained_params = CheckPoint.load_params(init_params, trainded_dir)
+    trainded_path = "/home/isgsktyktt/work/ssd_checkpoint/epoch0.bin"
+    assert(os.path.exists(trainded_path))
+    with open(trainded_path,"rb") as f:
+        trained_params = pickle.load(f)
 
     test_batch_getter = make_batch_getter(dataset, "train", rng1, pos_classes, 1, siz_vec, asp_vec, img_h, img_w)
     stride_vec = [2,4,8,16,32]
@@ -428,10 +429,7 @@ def make_batch_getter(dataset, dataset_type, rng, pos_classes, batch_size, siz_v
                                         batch_size = batch_size,
                                         aug_flip = True,
                                         aug_noise = True,
-                                        aug_crop_y0 = 0.25,
-                                        aug_crop_y1 = 0.75,
-                                        aug_crop_x0 = 0.25,
-                                        aug_crop_x1 = 0.75,
+                                        aug_crop_size = 0.75,
     )
 
     stride_vec = [2,4,8,16,32]
@@ -464,10 +462,7 @@ def label_encdec_test():
                                         label_txt_list = pos_classes,
                                         batch_size = batch_size,
                                         aug_flip = True,
-                                        aug_crop_y0 = 0.25,
-                                        aug_crop_y1 = 0.77,
-                                        aug_crop_x0 = 0.25,
-                                        aug_crop_x1 = 0.75,
+                                        aug_crop_size = 0.75,
                                         )
     for i in range(100):
         images, batched_labels = next(batch_gen)

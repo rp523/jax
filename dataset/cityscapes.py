@@ -151,10 +151,7 @@ class CityScapes:
     def make_generator(self, train_type, label_txt_list, batch_size,
                         aug_flip = False,
                         aug_noise = False,
-                        aug_crop_y0 = 0.0,
-                        aug_crop_y1 = 1.0,
-                        aug_crop_x0 = 0.0,
-                        aug_crop_x1 = 1.0,
+                        aug_crop_size = 1.0,
                         ):
         train_type_dict = self.__all[train_type]
         key_list = list(train_type_dict.keys())
@@ -184,14 +181,19 @@ class CityScapes:
                 if aug_noise:
                     self.__rng, rng = jax.random.split(self.__rng)
                     noise = jax.random.uniform(rng, (self.__img_h, self.__img_w, 3)) - 0.5
-                self.__rng, rng = jax.random.split(self.__rng)
-                crop_y0 = jax.random.uniform(rng) * (aug_crop_y0 - 0.0) + 0.0
-                self.__rng, rng = jax.random.split(self.__rng)
-                crop_y1 = jax.random.uniform(rng) * (1.0 - aug_crop_y1) + aug_crop_y1
-                self.__rng, rng = jax.random.split(self.__rng)
-                crop_x0 = jax.random.uniform(rng) * (aug_crop_x0 - 0.0) + 0.0
-                self.__rng, rng = jax.random.split(self.__rng)
-                crop_x1 = jax.random.uniform(rng) * (1.0 - aug_crop_x1) + aug_crop_x1
+                self.__rng, rng_yc, rng_xc, rng_s = jax.random.split(self.__rng, 4)
+                crop_size = jax.random.uniform(rng_s ) * (1.0 - aug_crop_size) +   aug_crop_size
+                crop_yc   = jax.random.uniform(rng_yc) * (1.0 -     crop_size) + 0.5 * crop_size
+                crop_xc   = jax.random.uniform(rng_xc) * (1.0 -     crop_size) + 0.5 * crop_size
+                
+                crop_y0 = crop_yc - 0.5 * crop_size
+                crop_y1 = crop_yc + 0.5 * crop_size
+                crop_x0 = crop_xc - 0.5 * crop_size
+                crop_x1 = crop_xc + 0.5 * crop_size
+                assert((0.0 <= crop_y0) and (crop_y0 <= 1.0))
+                assert((0.0 <= crop_y1) and (crop_y1 <= 1.0))
+                assert((0.0 <= crop_x0) and (crop_x0 <= 1.0))
+                assert((0.0 <= crop_x1) and (crop_x1 <= 1.0))
 
                 if len(label_txt_list) > 0:
                     if "json" in tgt.keys():
