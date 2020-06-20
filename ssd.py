@@ -99,6 +99,8 @@ def main():
     img_h = 128
     img_w = 256
     batch_size = BATCH_SIZE
+    stride_vec = [2,4,8,16,32]
+    PROB_TH = 0.5
     init_fun, apply_fun = SSD(pos_classes, siz_vec, asp_vec).get_jax_model()
 
     rng1, rng = jax.random.split(rng)
@@ -147,8 +149,10 @@ def main():
         loss_val, grad_val = value_and_grad(loss)(params, x, y)
         return loss_val, opt_update(cnt, grad_val, opt_state)
 
-    src_dir = os.path.join("../ssd_checkpoint", "epoch{}".format(0))
+    src_dir = os.path.join("ssd_checkpoint", "epoch{}".format(0))
+    src_dir = os.path.abspath(src_dir)
     if os.path.exists(src_dir):
+        print("FOUND INITIAL WEIGHT")
         init_params = CheckPoint.load_params(init_params, src_dir)
 
     opt_state = opt_init(init_params)
@@ -180,9 +184,11 @@ def main():
         if not os.path.exists(dst_dir):
             os.makedirs(dst_dir)
         CheckPoint.save_params(get_params(opt_state), dst_dir)
-    trained_params = get_params(opt_state)  # list format
 
-    PROB_TH = 0.95
+    trainded_dir = "/home/isgsktyktt/work/ssd_checkpoint/epoch0"
+    assert(os.path.exists(trainded_dir))
+    trained_params = CheckPoint.load_params(init_params, trainded_dir)
+
     test_batch_getter = make_batch_getter(dataset, "train", rng1, pos_classes, 1, siz_vec, asp_vec, img_h, img_w)
     stride_vec = [2,4,8,16,32]
     for l in range(itrnum_in_epoch):
