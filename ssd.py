@@ -57,16 +57,29 @@ def RootResNet18():
     net.add_layer(StrideBlock(512, 512, 3), name = "f32")           # stride = 32
     return net
 
+def CalcPosition(anchor_num):
+    out_ch = anchor_num * 4
+    return Conv(out_ch, (3, 3), (1, 1), padding = "SAME")
+
+def CalcClass(anchor_num, pos_classes):
+    all_class_num = 1 + len(pos_classes)
+    out_ch = anchor_num * all_class_num
+    return stax.serial( Conv(out_ch, (3, 3), (1, 1), padding = "SAME"),
+                        Softmax)
+
 def SSD(pos_classes, siz_vec, asp_vec):
     net = net_maker(prev_model = RootResNet18())
     anchor_num = siz_vec.size * asp_vec.size
-    anchor_out = 4 + (1 + len(pos_classes)) # position of rect + classify
-    out_ch = anchor_num * anchor_out
-    net.add_layer(  Conv(out_ch, (3, 3), (1, 1), padding = "SAME"), input_name =  "f2", name =  "a2")
-    net.add_layer(  Conv(out_ch, (3, 3), (1, 1), padding = "SAME"), input_name =  "f4", name =  "a4")
-    net.add_layer(  Conv(out_ch, (3, 3), (1, 1), padding = "SAME"), input_name =  "f8", name =  "a8")
-    net.add_layer(  Conv(out_ch, (3, 3), (1, 1), padding = "SAME"), input_name = "f16", name = "a16")
-    net.add_layer(  Conv(out_ch, (3, 3), (1, 1), padding = "SAME"), input_name = "f32", name = "a32")
+    net.add_layer(CalcPosition(anchor_num), input_name =  "f2", name =  "p2")
+    net.add_layer(CalcPosition(anchor_num), input_name =  "f4", name =  "p4")
+    net.add_layer(CalcPosition(anchor_num), input_name =  "f8", name =  "p8")
+    net.add_layer(CalcPosition(anchor_num), input_name = "f16", name = "p16")
+    net.add_layer(CalcPosition(anchor_num), input_name = "f32", name = "p32")
+    net.add_layer(CalcClass(anchor_num, pos_classes), input_name =  "f2", name =  "c2")
+    net.add_layer(CalcClass(anchor_num, pos_classes), input_name =  "f4", name =  "c4")
+    net.add_layer(CalcClass(anchor_num, pos_classes), input_name =  "f8", name =  "c8")
+    net.add_layer(CalcClass(anchor_num, pos_classes), input_name = "f16", name = "c16")
+    net.add_layer(CalcClass(anchor_num, pos_classes), input_name = "f32", name = "c32")
     return net
 
 def main():
@@ -107,25 +120,19 @@ def main():
             return (0.5 * x ** 2) * (jnp.abs(x) < 1) + (jnp.abs(x) - 0.5) * (jnp.abs(x) >= 1)
         out = 0.0
         for stride in [2,4,8,16,32]:
-            key = "a{}".format(stride)
-            pred = preds[key]
-            b, h, w, _ = pred.shape
-            pred = pred.reshape((b, h, w, siz_vec.size, asp_vec.size, 4 + all_class_num))
-            pred_pos, pred_cls_logit = jnp.split(pred, [4], axis = -1)
-            pos, pos_valid, cls, cls_valid = y[key]
+            feat_h = img_h // stride
+            feat_w = img_w // stride
+            pred_pos = preds["p{}".format(stride)]
+            pred_pos = pred_pos.reshape((BATCH_SIZE, feat_h, feat_w, siz_vec.size, asp_vec.size, 4))
+            pred_cls = preds["c{}".format(stride)]
+            pred_cls = pred_cls.reshape((BATCH_SIZE, feat_h, feat_w, siz_vec.size, asp_vec.size, all_class_num))
 
-            b, h, w, s, a = pos_valid.shape
-            pos_valid = pos_valid.reshape(b, h, w, s, a, 1)
-            assert(pred_pos.shape == (b, h, w, s, a, 4))
+            pos, pos_valid, cls, cls_valid = y["a{}".format(stride)]
+            pos_valid = pos_valid.reshape(BATCH_SIZE, feat_h, feat_w, siz_vec.size, asp_vec.size, 1)
             out += (POS_ALPHA * smooth_l1(pred_pos - pos) * pos_valid).sum()
-
-            #assert(cls.min() >= 0.0)
-            #assert(cls.max() <= 1.0)
-            pred_cls = jax.nn.softmax(pred_cls_logit, axis = -1)
-            assert(pred_cls.shape == (b, h, w, s, a, all_class_num))
-            b, h, w, s, a = cls_valid.shape
-            cls_valid = cls_valid.reshape(b, h, w, s, a, 1)
+            cls_valid = cls_valid.reshape(BATCH_SIZE, feat_h, feat_w, siz_vec.size, asp_vec.size, 1)
             out += (- cls * ((1.0 - pred_cls) ** FOCAL_GAMMA) * jnp.log(pred_cls + 1E-10) * cls_valid).sum()
+
         # batch average
         out /= x.shape[0]
 
@@ -212,21 +219,18 @@ def feat2rects(feat_dict, stride_vec, pos_classes, siz_vec, asp_vec, prob_th):
 
     anchor_num = siz_vec.size * asp_vec.size
     for stride in stride_vec:
-        # 特定のスケール特徴量マップのバッチ
-        stride_key = "a{}".format(stride)
-        batched_feat = feat_dict[stride_key]
-        if isinstance(batched_feat, tuple):
+        if "a{}".format(stride) in feat_dict.keys():
+            assert(not "p{}".format(stride) in feat_dict.keys())
+            assert(not "c{}".format(stride) in feat_dict.keys())
             # 正解ラベルをそのまま読み込む
             # classについてはsoftmaxで正規化済である想定
-            pos, pos_valid, cls, cls_valid = batched_feat
+            pos, pos_valid, cls, cls_valid = feat_dict["a{}".format(stride)]
         else:
+            assert("p{}".format(stride) in feat_dict.keys())
+            assert("c{}".format(stride) in feat_dict.keys())
             # 推論結果
-            all_class_num = 1 + len(pos_classes)
-            b, h, w, ch = batched_feat.shape
-            batched_feat = batched_feat.reshape((b, h, w, siz_vec.size, asp_vec.size, 4 + all_class_num))
-            pos, cls = np.split(batched_feat, [4], axis = -1)
-            cls = jax.nn.softmax(cls)
-            cls = np.array(cls)
+            pos = feat_dict["p{}".format(stride)]
+            cls = feat_dict["c{}".format(stride)]
         pos = np.array(pos)
         cls = np.array(cls)
 
@@ -356,10 +360,10 @@ def rects2feat(batched_annots, pos_classes, siz_vec, asp_vec, feat_h, feat_w):
     all_class_num = 1 + len(pos_classes)
     out_cls = np.eye(all_class_num, dtype = np.float32)[out_cls]
     assert(out_cls.shape == (batch_size, feat_h, feat_w, siz_vec.size, asp_vec.size, all_class_num))
-    pos_valid = (POS_IOU_TH <= all_iou) # only positive
-    cls_valid = np.logical_or(all_iou < NEG_IOU_TH, POS_IOU_TH <= all_iou) # positive & negative
+    out_pos_valid = (POS_IOU_TH <= all_iou) # only positive
+    out_cls_valid = np.logical_or(all_iou < NEG_IOU_TH, POS_IOU_TH <= all_iou) # positive & negative
 
-    return out_pos, pos_valid, out_cls, cls_valid
+    return out_pos, out_pos_valid, out_cls, out_cls_valid
 
 def calc_iou(base_y0, base_y1, base_x0, base_x1, base_h, base_w,
                 y0, y1, x0, x1, h, w):
