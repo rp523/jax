@@ -170,8 +170,8 @@ def main():
         for l in range(itrnum_in_epoch // fori_num):
             # fori_loopまではメモリオーバーでjit化できない
             # 内容は以下のfor文と等価
-            # for i in range(cnt, cnt + fori_num):
-            #     loss_val, opt_state = body_fun(i, (loss_val, opt_state))
+            #for i in range(cnt, cnt + fori_num):
+            #    loss_val, opt_state = body_fun(i, (loss_val, opt_state))
             loss_val, opt_state = jax.lax.fori_loop(cnt, cnt + fori_num, body_fun, (loss_val, opt_state))
             cnt += fori_num
             t = time.time()
@@ -180,7 +180,7 @@ def main():
                     "{:.1f}ms".format(1000 * (t - t0)),
                     loss_val)
             t0 = t
-        dst_dir = os.path.join("../ssd_checkpoint", "epoch{}".format(e + 1))
+        dst_dir = os.path.join("ssd_checkpoint", "epoch{}".format(e + 1))
         if not os.path.exists(dst_dir):
             os.makedirs(dst_dir)
         CheckPoint.save_params(get_params(opt_state), dst_dir)
