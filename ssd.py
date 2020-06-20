@@ -1,6 +1,7 @@
 #coding: utf-8
 import numpy as np
 import os, time
+import pickle
 from PIL import Image, ImageDraw
 
 import jax
@@ -14,7 +15,6 @@ from jax.experimental.stax import (AvgPool, BatchNorm, Conv, Dense, FanInSum,
                                     MaxPool, Relu, LogSoftmax, Softmax, elementwise)
 from model.maker.model_maker import net_maker
 from dataset.cityscapes import CityScapes
-from checkpoint import CheckPoint
 COLOR_LIST = [  (255,0,0),
                 (0,255,0),
                 (0,0,255),
@@ -150,11 +150,11 @@ def main():
         loss_val, grad_val = value_and_grad(loss)(params, x, y)
         return loss_val, opt_update(cnt, grad_val, opt_state)
 
-    src_dir = os.path.join("ssd_checkpoint", "epoch{}".format(0))
-    src_dir = os.path.abspath(src_dir)
-    if os.path.exists(src_dir):
+    load_param_path = os.path.join("ssd_checkpoint", "epoch{}.bin".format(0))
+    if os.path.exists(load_param_path):
+        with open(load_param_path, "rb") as f:
+            init_params = pickle.load(f)
         print("FOUND INITIAL WEIGHT")
-        init_params = CheckPoint.load_params(init_params, src_dir)
 
     opt_state = opt_init(init_params)
     itrnum_in_epoch = dataset.itrnum_in_epoch("train", batch_size)
@@ -180,10 +180,12 @@ def main():
                     "{:.1f}ms".format(1000 * (t - t0)),
                     loss_val)
             t0 = t
-        dst_dir = os.path.join("ssd_checkpoint", "epoch{}".format(e + 1))
+        dst_dir = "ssd_checkpoint"
         if not os.path.exists(dst_dir):
             os.makedirs(dst_dir)
-        CheckPoint.save_params(get_params(opt_state), dst_dir)
+        dst_path = os.path.join(dst_dir, "epoch{}.bin".format(e + 1))
+        with open(dst_path, "wb") as f:
+            pickle.dump(get_params(opt_state), f)
 
     trainded_dir = "/home/isgsktyktt/work/ssd_checkpoint/epoch0"
     assert(os.path.exists(trainded_dir))
