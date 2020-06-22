@@ -1,5 +1,5 @@
 #coding: utf-8
-import time
+import os, time, pickle
 import numpy as np
 import jax
 from jax import numpy as jnp
@@ -107,6 +107,7 @@ def main():
     t_cnt = 0
 
     t0 = time.time()
+    save_t0 = t0
     q_loss_val, f_loss_val = 0.0, 0.0
     for t in range(T):
         for c in range(C):
@@ -122,6 +123,17 @@ def main():
         rng1, rng = jax.random.split(rng)
         q_loss_val, q_opt_state = q_opt_update(t_cnt, q_opt_state, f_opt_state, x_batch, rng1)
         t_cnt += 1
+
+        save_dir = "ebm_weight"
+        save_t1 = time.time()
+        if (save_t1 - save_t0 > 5 * 60):
+            save_t0 = save_t1
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+            with open(os.path.join(save_dir, "q.pickle"), "wb") as f:
+                pickle.dump(q_get_params(q_opt_state), f)
+            with open(os.path.join(save_dir, "f.pickle"), "wb") as f:
+                pickle.dump(f_get_params(f_opt_state), f)
 
 def trial():
     def f(p, x):
