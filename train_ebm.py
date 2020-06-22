@@ -2,6 +2,7 @@
 import os, time, pickle
 import numpy as np
 import jax
+from matplotlib import pyplot as plt
 from jax import numpy as jnp
 from jax.experimental import optimizers
 from jax.experimental.stax import Dense, Tanh, elementwise
@@ -22,37 +23,34 @@ def mlp(out_ch):
     return net.get_jax_model()
 
 def main():
-    LR = 1E-3
+    LR = 1E-5
     LAMBDA = 0.5
-    BATCH_SIZE = 10
+    BATCH_SIZE = 128
     X_SIZE = 2
+    T = 99999999
+    C = 5
+
     rng = jax.random.PRNGKey(0)
     q_init_fun, q_apply_fun_raw = mlp(1)
     f_init_fun, f_apply_fun_raw = mlp(X_SIZE)
     def q_apply_fun(params, x):
-        ret = q_apply_fun_raw(params, x)["out"]    # batch_ 1
-        assert(ret.size == 1)
-        return ret.sum()
+        ret = q_apply_fun_raw(params, x)["out"]
+        if x.ndim <= 1:
+            # not batch -> convert scalar to take grad.
+            ret = ret.sum()
+        return ret
     def f_apply_fun(params, x):
         return f_apply_fun_raw(params, x)["out"]
     q_init, q_update, q_get_params = optimizers.adam(LR)
     f_init, f_update, f_get_params = optimizers.adam(LR)
 
-    rng_q, rng_f, rng = jax.random.split(rng, 3)
-    _, q_init_params = q_init_fun(rng_q, input_shape = (BATCH_SIZE, X_SIZE))
-    rng1, rng = jax.random.split(rng)
-    _, f_init_params = f_init_fun(rng_f, input_shape = (BATCH_SIZE, X_SIZE))
-    
-    q_opt_state = q_init(q_init_params)
-    f_opt_state = f_init(f_init_params)
-
-    #@jax.jit
+    @jax.jit
     def q_opt_update(cnt, q_opt_state, f_opt_state, xx_batch, rng):
         f_params = f_get_params(f_opt_state)
         q_params = q_get_params(q_opt_state)
         loss_val, grad_val = jax.value_and_grad(q_loss, argnums = 0)(q_params, f_params, x_batch, rng)
         return loss_val, q_update(cnt, grad_val, q_opt_state)
-    #@jax.jit
+    @jax.jit
     def f_opt_update(cnt, q_opt_state, f_opt_state, x_batch, rng):
         f_params = f_get_params(f_opt_state)
         q_params = q_get_params(q_opt_state)
@@ -100,8 +98,6 @@ def main():
         target /= x_batch.shape[0]
         return target
     
-    T = 1000
-    C = 5
     sampler = Sampler(BATCH_SIZE)
     c_cnt = 0
     t_cnt = 0
@@ -109,6 +105,23 @@ def main():
     t0 = time.time()
     save_t0 = t0
     q_loss_val, f_loss_val = 0.0, 0.0
+
+    save_dir = "ebm_weight"
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    q_param_path = os.path.join(save_dir, "q.pickle")
+    f_param_path = os.path.join(save_dir, "f.pickle")
+    if os.path.exists(q_param_path) and os.path.exists(f_param_path):
+        q_init_params = pickle.load(open(q_param_path, "rb"))
+        f_init_params = pickle.load(open(f_param_path, "rb"))
+    else:
+        rng_q, rng_f, rng = jax.random.split(rng, 3)
+        _, q_init_params = q_init_fun(rng_q, input_shape = (BATCH_SIZE, X_SIZE))
+        rng1, rng = jax.random.split(rng)
+        _, f_init_params = f_init_fun(rng_f, input_shape = (BATCH_SIZE, X_SIZE))
+    q_opt_state = q_init(q_init_params)
+    f_opt_state = f_init(f_init_params)
+
     for t in range(T):
         for c in range(C):
             x_batch = sampler.sample()   # batch=1
@@ -116,24 +129,37 @@ def main():
             rng1, rng = jax.random.split(rng)
             f_loss_val, f_opt_state = f_opt_update(c_cnt, q_opt_state, f_opt_state, x_batch, rng1)
             c_cnt += 1
-            t1 = time.time()
-            print(t, "{:.1f}sec".format((t1 - t0) * 1000), q_loss_val, f_loss_val)
-            t0 = t1
+        t1 = time.time()
+        print(t, "{:.1f}sec".format((t1 - t0) * 1000), q_loss_val, f_loss_val)
+        t0 = t1
         x_batch = sampler.sample()
         rng1, rng = jax.random.split(rng)
         q_loss_val, q_opt_state = q_opt_update(t_cnt, q_opt_state, f_opt_state, x_batch, rng1)
         t_cnt += 1
 
-        save_dir = "ebm_weight"
         save_t1 = time.time()
         if (save_t1 - save_t0 > 5 * 60):
             save_t0 = save_t1
-            if not os.path.exists(save_dir):
-                os.makedirs(save_dir)
-            with open(os.path.join(save_dir, "q.pickle"), "wb") as f:
+            with open(q_param_path, "wb") as f:
                 pickle.dump(q_get_params(q_opt_state), f)
-            with open(os.path.join(save_dir, "f.pickle"), "wb") as f:
+            with open(f_param_path, "wb") as f:
                 pickle.dump(f_get_params(f_opt_state), f)
+    
+    bin_num = 30
+    x = jnp.arange(0.0, 1.0, 1.0 / bin_num)
+    x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
+    y = jnp.arange(0.0, 1.0, 1.0 / bin_num)
+    y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
+    data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
+    q_params = q_get_params(q_opt_state)
+    minus_E = q_apply_fun(q_params, data)
+    unnorm_q = jnp.exp(minus_E)
+    unnorm_q = unnorm_q.reshape((bin_num, bin_num))
+    X = jnp.arange(0.0, 1.0, 1.0 / bin_num)
+    Y = jnp.arange(0.0, 1.0, 1.0 / bin_num)
+    X, Y = jnp.meshgrid(X, Y)
+    plt.pcolor(X, Y, unnorm_q)
+    plt.show()
 
 def trial():
     def f(p, x):
