@@ -25,7 +25,7 @@ def mlp(out_ch):
 def main():
     LR = 1E-5
     LAMBDA = 0.5
-    BATCH_SIZE = 128
+    BATCH_SIZE = 256
     X_SIZE = 2
     T = 99999999
     C = 5
@@ -130,7 +130,7 @@ def main():
             f_loss_val, f_opt_state = f_opt_update(c_cnt, q_opt_state, f_opt_state, x_batch, rng1)
             c_cnt += 1
         t1 = time.time()
-        print(t, "{:.1f}sec".format((t1 - t0) * 1000), q_loss_val, f_loss_val)
+        print(t, "{:.1f}ms".format((t1 - t0) * 1000), q_loss_val, f_loss_val)
         t0 = t1
         x_batch = sampler.sample()
         rng1, rng = jax.random.split(rng)
