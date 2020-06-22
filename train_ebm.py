@@ -129,16 +129,16 @@ def main():
             rng1, rng = jax.random.split(rng)
             f_loss_val, f_opt_state = f_opt_update(c_cnt, q_opt_state, f_opt_state, x_batch, rng1)
             c_cnt += 1
-            t1 = time.time()
-            print(t, "{:.1f}sec".format((t1 - t0) * 1000), q_loss_val, f_loss_val)
-            t0 = t1
+        t1 = time.time()
+        print(t, "{:.1f}sec".format((t1 - t0) * 1000), q_loss_val, f_loss_val)
+        t0 = t1
         x_batch = sampler.sample()
         rng1, rng = jax.random.split(rng)
         q_loss_val, q_opt_state = q_opt_update(t_cnt, q_opt_state, f_opt_state, x_batch, rng1)
         t_cnt += 1
 
         save_t1 = time.time()
-        if (save_t1 - save_t0 > 5 * 1):
+        if (save_t1 - save_t0 > 5 * 60):
             save_t0 = save_t1
             with open(q_param_path, "wb") as f:
                 pickle.dump(q_get_params(q_opt_state), f)
