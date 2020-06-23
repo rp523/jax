@@ -13,8 +13,8 @@ class Sampler:
         xy = np.empty((batch_size, 2), dtype = np.float32)
         valid_num = 0
         while True:
-            x = np.random.uniform()
-            y = np.random.uniform()
+            x = np.random.uniform() - 0.5
+            y = np.random.uniform() - 0.5
             z = np.random.uniform()
             if z < Sampler.__prob(x, y):
                 xy[valid_num] = np.array([x, y])
@@ -26,9 +26,11 @@ class Sampler:
         delta_r = 0.2
         top_num = 3
         sigma = 0.05
-        
-        rx = x - 0.5
-        ry = y - 0.5
+        cx = 0.0
+        cy = 0.0
+
+        rx = x - cx
+        ry = y - cy
         r = (rx ** 2 + ry ** 2) ** 0.5
 
         ret = 0.0
