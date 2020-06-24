@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from tqdm import tqdm
-PROB_TYPE = "block"
+PROB_TYPE = "triangle"
 
 class Sampler:
     def __init__(self, rng, batch_size):
@@ -66,7 +66,21 @@ class Sampler:
                         rx = x.T[0] - cx
                         ry = x.T[1] - cy
                         ret += jnp.exp(- (rx ** 2 + ry ** 2) / (2 * sigma ** 2))
-            ret = ret / 1.1
+            ret = ret / 0.7025556   # normalize so that integral is unity. max is 1.5295591
+        elif PROB_TYPE == "triangle":
+            ret = jnp.ones(x.shape[0])
+            angle_num = 3
+            sigma = 0.02
+            delta = 0.25
+            for i in range(angle_num):
+                theta = 2 * jnp.pi * (i / angle_num)
+                cos_val = jnp.cos(theta)
+                sin_val = jnp.sin(theta)
+                rot_mat = jnp.array(   [[cos_val, -sin_val],
+                                        [sin_val,  cos_val]])
+                lined_x = -jnp.dot(rot_mat, x.T)[1]
+                weight = jax.nn.sigmoid(-(lined_x - delta) / sigma)
+                ret *= (weight)
         return ret
 
 def exect_plot():

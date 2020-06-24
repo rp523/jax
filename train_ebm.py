@@ -15,13 +15,13 @@ Swish = elementwise(swish)
 
 def mlp(out_ch):
     net = net_maker()
-    for _ in range(5):
-        net.add_layer(serial(Dense(50), Tanh))
+    for _ in range(2):
+        net.add_layer(serial(Dense(300), Swish))
     net.add_layer(Dense(out_ch), name = "out")
     return net.get_jax_model()
 
 def main():
-    LR = 1E-4
+    LR = 1E-5
     LAMBDA = 0.5
     BATCH_SIZE = 8
     X_SIZE = 2
@@ -66,7 +66,7 @@ def main():
     def q_opt_update(cnt, q_opt_state, f_opt_state, x_batch, rng):
         f_params = f_get_params(f_opt_state)
         q_params = q_get_params(q_opt_state)
-        loss_val, grad_val = jax.value_and_grad(q_loss, argnums = 0)(q_params, f_params, x_batch, rng)
+        loss_val, grad_val = jax.value_and_grad(q_loss_d, argnums = 0)(q_params, f_params, x_batch, rng)
         return loss_val, q_update(cnt, grad_val, q_opt_state)
     @jax.jit
     def f_opt_update(cnt, q_opt_state, f_opt_state, x_batch, rng):
@@ -117,6 +117,7 @@ def main():
             target += (lsd - LAMBDA * (f_val ** 2).sum())
         target /= x_batch.shape[0]
         return -target # flip sign to maximize
+    # generative approach
     def q_loss(q_params, f_params, x_batch, rng):
         target = 0.0
         for x in x_batch:
@@ -125,6 +126,23 @@ def main():
         target /= x_batch.shape[0]
         target += 1E-4 * net_maker.weight_decay(q_params)
         return target
+    
+    # discrimitive approach
+    def q_loss_d(q_params, f_params, x_batch_biased, rng):
+        x_batch = jax.random.uniform(rng, (BATCH_SIZE, X_SIZE)) - 0.5
+        
+        pred = q_apply_fun(q_params, x_batch)
+        pred = jax.nn.sigmoid(pred) * 1.5295591
+        #assert(pred.min() >= 0)
+        #assert(pred.max() <= 1.5295591)
+        tgt  = Sampler.prob(x_batch)
+        #assert(tgt.min() >= 0)
+        #assert(tgt.max() <= 1.5295591)
+        loss = (pred - tgt) ** 2
+        loss = loss.sum() / x_batch.shape[0]
+
+        loss += 1E-4 * net_maker.weight_decay(q_params)
+        return loss
     
     rng = jax.random.PRNGKey(0)
     sampler = Sampler(rng, BATCH_SIZE)
