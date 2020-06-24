@@ -5,7 +5,7 @@ import jax
 from matplotlib import pyplot as plt
 from jax import numpy as jnp
 from jax.experimental import optimizers
-from jax.experimental.stax import Dense, Tanh, elementwise
+from jax.experimental.stax import serial, Dense, Tanh, elementwise, BatchNorm
 from ebm.sampler import Sampler
 from model.maker.model_maker import net_maker
 
@@ -15,37 +15,55 @@ Swish = elementwise(swish)
 
 def mlp(out_ch):
     net = net_maker()
-    net.add_layer(Dense(300))
-    net.add_layer(Swish)
-    net.add_layer(Dense(300))
-    net.add_layer(Swish)
+    for _ in range(5):
+        net.add_layer(serial(Dense(50), Tanh))
     net.add_layer(Dense(out_ch), name = "out")
     return net.get_jax_model()
 
 def main():
-    LR = 1E-5
+    LR = 1E-4
     LAMBDA = 0.5
-    BATCH_SIZE = 256
+    BATCH_SIZE = 8
     X_SIZE = 2
-    T = 99999999
-    C = 5
+    TRAINING = True
+    C = 0
 
-    rng = jax.random.PRNGKey(0)
     q_init_fun, q_apply_fun_raw = mlp(1)
     f_init_fun, f_apply_fun_raw = mlp(X_SIZE)
     def q_apply_fun(params, x):
         ret = q_apply_fun_raw(params, x)["out"]
-        if x.ndim <= 1:
-            # not batch -> convert scalar to take grad.
+        if ret.size == 1:
             ret = ret.sum()
         return ret
-    def f_apply_fun(params, x):
-        return f_apply_fun_raw(params, x)["out"]
+    # NN-approximate critic 
+    def f_apply_fun_(f_params, x, q_params):
+        return f_apply_fun_raw(f_params, x)["out"]
+    # exact critic
+    def f_apply_fun(f_params, x, q_params):
+        return exact_critic(q_params, f_params, x)
+
     q_init, q_update, q_get_params = optimizers.adam(LR)
     f_init, f_update, f_get_params = optimizers.adam(LR)
 
+    def exact_critic(   q_params,
+                        f_params,
+                        x,  # NO batch
+                        ):
+        assert(x.ndim == 1)
+        grad_x_log_q_fun = jax.grad(q_apply_fun, argnums = 1)
+        grad_x_log_q_val = grad_x_log_q_fun(q_params, x)
+        assert(grad_x_log_q_val.shape == (x.size,))
+
+        def log_p(x):
+            p = Sampler.prob(x)
+            return jnp.log(p)
+        grad_x_log_p_fun = jax.grad(log_p)
+        grad_x_log_p_val = grad_x_log_p_fun(x)
+        
+        return (grad_x_log_q_val - grad_x_log_p_val) / (2 * LAMBDA)
+
     @jax.jit
-    def q_opt_update(cnt, q_opt_state, f_opt_state, xx_batch, rng):
+    def q_opt_update(cnt, q_opt_state, f_opt_state, x_batch, rng):
         f_params = f_get_params(f_opt_state)
         q_params = q_get_params(q_opt_state)
         loss_val, grad_val = jax.value_and_grad(q_loss, argnums = 0)(q_params, f_params, x_batch, rng)
@@ -56,49 +74,60 @@ def main():
         q_params = q_get_params(q_opt_state)
         loss_val, grad_val = jax.value_and_grad(f_loss, argnums = 1)(q_params, f_params, x_batch, rng)
         return loss_val, f_update(cnt, grad_val, f_opt_state)
-    def LSDE(   q_params,
+    def LSD(    q_params,
                 f_params,
                 x,  # NO batch
                 rng):
         assert(x.ndim == 1)
         grad_x_log_q_fun = jax.grad(q_apply_fun, argnums = 1)
-        grad_x_f_fun = jax.jacfwd(f_apply_fun, argnums = 1)
-
         grad_x_log_q_val = grad_x_log_q_fun(q_params, x)
         assert(grad_x_log_q_val.shape == (x.size,))
-        f_val = f_apply_fun(f_params, x)
+        f_val = f_apply_fun(f_params, x, q_params)
         assert(f_val.shape == (x.size,))
         term1 = jnp.dot(grad_x_log_q_val, f_val)    # shape (n,) and shape (n, )
         assert(term1.size == 1) # scalar
+        
+        def EfficientTrace(rng, x, q_params, f_params):
+            grad_x_f_fun = jax.jacfwd(f_apply_fun, argnums = 1)
+            epsilon = jax.random.normal(rng, (x.size,))
+            grad_x_f_val = grad_x_f_fun(f_params, x)
+            assert(grad_x_f_val.shape == (x.size, x.size))
+            dot12 = jnp.dot(epsilon, grad_x_f_val)
+            assert(dot12.shape == (x.size,))
+            dot123 = jnp.dot(dot12, epsilon)
+            assert(dot123.size == 1)    # scalar
+            return dot123.sum()
+        
+        def Trace(rng, x, q_params, f_params):
+            grad_x_f_fun = jax.jacfwd(f_apply_fun, argnums = 1)
+            grad_x_f_val = grad_x_f_fun(f_params, x, q_params)
+            assert(grad_x_f_val.shape == (x.size, x.size))
+            return (grad_x_f_val * jnp.eye(x.size)).sum()
 
-        epsilon = jax.random.normal(rng, (x.size, 1))
-        grad_x_f_val = grad_x_f_fun(f_params, x)
-        assert(grad_x_f_val.shape == (x.size, x.size))
-        dot12 = jnp.dot(epsilon.T, grad_x_f_val)
-        assert(dot12.shape == (1, x.size))
-        dot123 = jnp.dot(dot12, epsilon)
-        assert(dot123.size == 1)    # scalar
-        lsde = term1 + dot123
-        assert(lsde.size == 1)    # scalar
-        lsde = lsde.sum()
-        return lsde, f_val
+        trace = Trace(rng, x, q_params, f_params)
+        lsd = term1 + trace
+        assert(lsd.size == 1)    # scalar
+        lsd = lsd.sum()
+        return lsd, f_val
     def f_loss(q_params, f_params, x_batch, rng):
         target = 0.0
         for x in x_batch:
-            lsde, f_val = LSDE(q_params, f_params, x, rng)
+            lsd, f_val = LSD(q_params, f_params, x, rng)
             assert(f_val.shape == (x.size,))
-            target += lsde - LAMBDA * (f_val ** 2).sum()
+            target += (lsd - LAMBDA * (f_val ** 2).sum())
         target /= x_batch.shape[0]
         return -target # flip sign to maximize
     def q_loss(q_params, f_params, x_batch, rng):
         target = 0.0
         for x in x_batch:
-            lsde, _ = LSDE(q_params, f_params, jnp.ones((2,)), rng)
-            target += lsde
+            lsd, _ = LSD(q_params, f_params, x, rng)
+            target += lsd
         target /= x_batch.shape[0]
+        target += 1E-4 * net_maker.weight_decay(q_params)
         return target
     
-    sampler = Sampler(BATCH_SIZE)
+    rng = jax.random.PRNGKey(0)
+    sampler = Sampler(rng, BATCH_SIZE)
     c_cnt = 0
     t_cnt = 0
 
@@ -114,6 +143,7 @@ def main():
     if os.path.exists(q_param_path) and os.path.exists(f_param_path):
         q_init_params = pickle.load(open(q_param_path, "rb"))
         f_init_params = pickle.load(open(f_param_path, "rb"))
+        print("LOADED INIT PARAMS")
     else:
         rng_q, rng_f, rng = jax.random.split(rng, 3)
         _, q_init_params = q_init_fun(rng_q, input_shape = (BATCH_SIZE, X_SIZE))
@@ -121,44 +151,53 @@ def main():
         _, f_init_params = f_init_fun(rng_f, input_shape = (BATCH_SIZE, X_SIZE))
     q_opt_state = q_init(q_init_params)
     f_opt_state = f_init(f_init_params)
-
-    for t in range(T):
+    
+    while TRAINING:
         for c in range(C):
             x_batch = sampler.sample()   # batch=1
             assert(x_batch.shape == (BATCH_SIZE, X_SIZE))
             rng1, rng = jax.random.split(rng)
             f_loss_val, f_opt_state = f_opt_update(c_cnt, q_opt_state, f_opt_state, x_batch, rng1)
             c_cnt += 1
-        t1 = time.time()
-        print(t, "{:.1f}ms".format((t1 - t0) * 1000), q_loss_val, f_loss_val)
-        t0 = t1
+
         x_batch = sampler.sample()
         rng1, rng = jax.random.split(rng)
         q_loss_val, q_opt_state = q_opt_update(t_cnt, q_opt_state, f_opt_state, x_batch, rng1)
         t_cnt += 1
 
+        t1 = time.time()
+        if t1 - t0 > 1:
+            print(  t_cnt,
+                    "{:.1f}ms".format((t1 - t0) * 1000),
+                    q_loss_val,
+                    - f_loss_val,
+                    )
+            t0 = t1
+
         save_t1 = time.time()
-        if (save_t1 - save_t0 > 5 * 60):
+        if (save_t1 - save_t0 > 10):
             save_t0 = save_t1
             with open(q_param_path, "wb") as f:
                 pickle.dump(q_get_params(q_opt_state), f)
             with open(f_param_path, "wb") as f:
                 pickle.dump(f_get_params(f_opt_state), f)
     
-    bin_num = 30
-    x = jnp.arange(0.0, 1.0, 1.0 / bin_num)
+    bin_num = 100
+    x = jnp.linspace(-0.5, 0.5, bin_num)
     x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
-    y = jnp.arange(0.0, 1.0, 1.0 / bin_num)
+    y = jnp.linspace(-0.5, 0.5, bin_num)
     y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
     data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
-    q_params = q_get_params(q_opt_state)
-    minus_E = q_apply_fun(q_params, data)
-    unnorm_q = jnp.exp(minus_E)
-    unnorm_q = unnorm_q.reshape((bin_num, bin_num))
-    X = jnp.arange(0.0, 1.0, 1.0 / bin_num)
-    Y = jnp.arange(0.0, 1.0, 1.0 / bin_num)
+    assert(data.shape == (bin_num * bin_num, 2))
+    minus_E = q_apply_fun(q_init_params, data)
+    assert(minus_E.shape == (bin_num * bin_num, 1))
+    unnorm_log_q = minus_E
+    unnorm_log_q = unnorm_log_q.reshape((bin_num, bin_num))
+    X = jnp.linspace(-0.5, 0.5, bin_num)
+    Y = jnp.linspace(-0.5, 0.5, bin_num)
     X, Y = jnp.meshgrid(X, Y)
-    plt.pcolor(X, Y, unnorm_q)
+    plt.pcolor(X, Y, unnorm_log_q)
+    plt.colorbar()
     plt.show()
 
 def trial():

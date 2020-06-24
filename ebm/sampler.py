@@ -1,53 +1,105 @@
 #coding: utf-8
-import numpy as np
+import jax
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from tqdm import tqdm
+PROB_TYPE = "block"
 
 class Sampler:
-    def __init__(self, batch_size = 1):
-        self.__maker = Sampler.__Maker(batch_size)
+    def __init__(self, rng, batch_size):
+        self.__maker = Sampler.__Maker(rng, batch_size)
+
     def sample(self):
         return next(self.__maker)
-    def __Maker(batch_size):
-        xy = np.empty((batch_size, 2), dtype = np.float32)
-        valid_num = 0
+
+    @staticmethod
+    def __Maker(rng, batch_size):
+        split_num = 8
+        xy = jnp.zeros((batch_size, 2), dtype = jnp.float32)
+        sampled_num = 0
         while True:
-            x = np.random.uniform() - 0.5
-            y = np.random.uniform() - 0.5
-            z = np.random.uniform()
-            if z < Sampler.__prob(x, y):
-                xy[valid_num] = np.array([x, y])
-                valid_num += 1
-            if valid_num == batch_size:
-                yield xy
-                valid_num = 0
-    def __prob(x, y):
-        delta_r = 0.2
-        top_num = 3
-        sigma = 0.05
-        cx = 0.0
-        cy = 0.0
+            rng_x, rng_p, rng = jax.random.split(rng, 3)
+            x = jax.random.uniform(rng_x, (split_num, 2)) - 0.5
+            p = jax.random.uniform(rng_p, (split_num,)  )
+            is_valid = (p < Sampler.prob(x))
+            assert(is_valid.shape == (split_num,))
+            valid_num = is_valid.sum()
+            if valid_num > 0:
+                valid_indexes = jnp.where(is_valid)[0]
+                assert(valid_indexes.size == valid_num)
+                remain_num = batch_size - sampled_num
+                add_num = min(remain_num, valid_num)
+                xy = jax.ops.index_update(xy, jax.ops.index[sampled_num:sampled_num + add_num], x[is_valid][:add_num])
+                sampled_num += add_num
+                if sampled_num >= batch_size:
+                    yield xy
+                    sampled_num = 0
 
-        rx = x - cx
-        ry = y - cy
-        r = (rx ** 2 + ry ** 2) ** 0.5
+    @staticmethod
+    def prob(x):
+        assert(x.shape[-1] == 2)
 
-        ret = 0.0
-        for i in range(top_num):
-            ret += np.exp(- ((r - (i + 0.5) * delta_r) ** 2) / (2 * sigma ** 2))
+        if PROB_TYPE == "center_wave":
+            delta_r = 0.2
+            top_num = 3
+            sigma = 0.05
+            cx = 0.0
+            cy = 0.0
+
+            rx = x.T[0] - cx
+            ry = x.T[1] - cy
+            r = (rx ** 2 + ry ** 2) ** 0.5
+
+            ret = 0.0
+            for i in range(top_num):
+                ret += jnp.exp(- ((r - (i + 0.5) * delta_r) ** 2) / (2 * sigma ** 2))
+        elif PROB_TYPE == "block":
+            ret = 0.0
+            split_num = 5
+            sigma = 1.0 / split_num / 2.0
+            for i in range(split_num):
+                for j in range(split_num):
+                    if (i + j) % 2 == 0:
+                        cx = (i + 0.5) / split_num - 0.5
+                        cy = (j + 0.5) / split_num - 0.5
+                        rx = x.T[0] - cx
+                        ry = x.T[1] - cy
+                        ret += jnp.exp(- (rx ** 2 + ry ** 2) / (2 * sigma ** 2))
+            ret = ret / 1.1
         return ret
 
+def exect_plot():
+    bin_num = 100
+    x = jnp.linspace(-0.5, 0.5, bin_num)
+    x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
+    y = jnp.linspace(-0.5, 0.5, bin_num)
+    y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
+    data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
+    assert(data.shape == (bin_num * bin_num, 2))
+    z = Sampler.prob(data)
+    assert(z.shape == (bin_num * bin_num,))
+    z = z.reshape((bin_num, bin_num))
+    X = jnp.linspace(-0.5, 0.5, bin_num)
+    Y = jnp.linspace(-0.5, 0.5, bin_num)
+    X, Y = jnp.meshgrid(X, Y)
+    plt.pcolor(X, Y, z)
+    plt.colorbar()
+    plt.show()
+
+
 def main():
-    SAMPLE_NUM = 99999
-    s = Sampler()
-    x_vec = np.zeros(SAMPLE_NUM, dtype = np.float32)
-    y_vec = np.zeros(SAMPLE_NUM, dtype = np.float32)
-    for i in tqdm(range(SAMPLE_NUM)):
+    rng = jax.random.PRNGKey(0)
+    SAMPLE_NUM = 100000
+    BATCH_SIZE = 1000
+    s = Sampler(rng, batch_size = BATCH_SIZE)
+    x_vec = jnp.zeros(SAMPLE_NUM, dtype = jnp.float32)
+    y_vec = jnp.zeros(SAMPLE_NUM, dtype = jnp.float32)
+    for i in tqdm(range(SAMPLE_NUM // BATCH_SIZE)):
         xy = s.sample()
-        x_vec[i] = xy[0, 0]
-        y_vec[i] = xy[0, 1]
-    
+        x_vec = jax.ops.index_update(x_vec, jax.ops.index[i * BATCH_SIZE:(i + 1) * BATCH_SIZE], xy[:, 0])
+        y_vec = jax.ops.index_update(y_vec, jax.ops.index[i * BATCH_SIZE:(i + 1) * BATCH_SIZE], xy[:, 1])
+
     fig = plt.figure()
     ax = fig.add_subplot(111)
 
@@ -59,5 +111,6 @@ def main():
     plt.show()
 
 if __name__ == "__main__":
+    #exect_plot();exit()
     main()
     print("Done.")
