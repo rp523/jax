@@ -55,7 +55,11 @@ def main(is_training):
         assert(grad_x_log_q_val.shape == (x.size,))
 
         def log_p(x):
+            assert(x.ndim == 1)
+            x = x.reshape((1, x.size))  # reshape of 1-batch
             p = Sampler.prob(x)
+            if p.size == 1:
+                p = p.sum()
             return jnp.log(p)
         grad_x_log_p_fun = jax.grad(log_p)
         grad_x_log_p_val = grad_x_log_p_fun(x)
@@ -66,7 +70,7 @@ def main(is_training):
     def q_opt_update(cnt, q_opt_state, f_opt_state, x_batch, rng):
         f_params = f_get_params(f_opt_state)
         q_params = q_get_params(q_opt_state)
-        loss_val, grad_val = jax.value_and_grad(q_loss_d, argnums = 0)(q_params, f_params, x_batch, rng)
+        loss_val, grad_val = jax.value_and_grad(q_loss, argnums = 0)(q_params, f_params, x_batch, rng)
         return loss_val, q_update(cnt, grad_val, q_opt_state)
     @jax.jit
     def f_opt_update(cnt, q_opt_state, f_opt_state, x_batch, rng):
@@ -124,7 +128,7 @@ def main(is_training):
             lsd, _ = LSD(q_params, f_params, x, rng)
             target += lsd
         target /= x_batch.shape[0]
-        target += 1E-4 * net_maker.weight_decay(q_params)
+        #target += 1E-4 * net_maker.weight_decay(q_params)
         return target
     
     # discrimitive approach
