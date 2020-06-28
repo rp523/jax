@@ -1,5 +1,5 @@
 #coding: utf-8
-import os, time, pickle
+import os, time, pickle, argparse
 import numpy as np
 import jax
 from matplotlib import pyplot as plt
@@ -21,12 +21,11 @@ def mlp(out_ch):
     net.add_layer(serial(Dense(out_ch)), name = "out")
     return net.get_jax_model()
 
-def main():
+def main(is_training):
     LR = 1E-3
     LAMBDA = 0.5
     BATCH_SIZE = 8
     X_SIZE = 2
-    TRAINING = True
     C = 0
 
     q_init_fun, q_apply_fun_raw = mlp(1)
@@ -171,7 +170,7 @@ def main():
     q_opt_state = q_init(q_init_params)
     f_opt_state = f_init(f_init_params)
     
-    while TRAINING:
+    while is_training:
         for c in range(C):
             x_batch = sampler.sample()   # batch=1
             assert(x_batch.shape == (BATCH_SIZE, X_SIZE))
@@ -238,5 +237,10 @@ def trial():
     print((ans1 == ans2).all())
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-t", "--training", type = int)
+    args = parser.parse_args()
+
+    is_training = (args.training != 0)
+    main(is_training)
     print("Done.")
