@@ -71,7 +71,7 @@ def main(is_training):
     def q_opt_update(cnt, q_opt_state, f_opt_state, x_batch, rng):
         f_params = f_get_params(f_opt_state)
         q_params = q_get_params(q_opt_state)
-        loss_val, grad_val = jax.value_and_grad(q_loss, argnums = 0)(q_params, f_params, x_batch, rng)
+        loss_val, grad_val = jax.value_and_grad(q_loss_d, argnums = 0)(q_params, f_params, x_batch, rng)
         return loss_val, q_update(cnt, grad_val, q_opt_state)
     @jax.jit
     def f_opt_update(cnt, q_opt_state, f_opt_state, x_batch, rng):

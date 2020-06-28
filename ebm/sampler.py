@@ -81,7 +81,6 @@ class Sampler:
                 lined_x = -jnp.dot(rot_mat, x.T)[1]
                 weight = jax.nn.sigmoid(-(lined_x - delta) / sigma)
                 ret *= (weight)
-            ret /= 0.31977722
         return ret
 
 def exect_plot():
