@@ -22,11 +22,12 @@ def mlp(out_ch):
     return net.get_jax_model()
 
 def main(is_training):
-    LR = 1E-3
+    Q_LR = 1E-3
+    F_LR = 1E-3
     LAMBDA = 0.5
     BATCH_SIZE = 8
     X_SIZE = 2
-    C = 0
+    C = 5
 
     q_init_fun, q_apply_fun_raw = mlp(1)
     f_init_fun, f_apply_fun_raw = mlp(X_SIZE)
@@ -42,8 +43,8 @@ def main(is_training):
     def f_apply_fun(f_params, x, q_params):
         return exact_critic(q_params, f_params, x)
 
-    q_init, q_update, q_get_params = optimizers.adam(LR)
-    f_init, f_update, f_get_params = optimizers.adam(LR)
+    q_init, q_update, q_get_params = optimizers.adam(Q_LR)
+    f_init, f_update, f_get_params = optimizers.adam(F_LR)
 
     def exact_critic(   q_params,
                         f_params,
@@ -176,7 +177,7 @@ def main(is_training):
     
     while is_training:
         for c in range(C):
-            x_batch = sampler.sample()   # batch=1
+            x_batch = sampler.sample()
             assert(x_batch.shape == (BATCH_SIZE, X_SIZE))
             rng1, rng = jax.random.split(rng)
             f_loss_val, f_opt_state = f_opt_update(c_cnt, q_opt_state, f_opt_state, x_batch, rng1)
