@@ -5,7 +5,8 @@ import jax
 from matplotlib import pyplot as plt
 from jax import numpy as jnp
 from jax.experimental import optimizers
-from jax.experimental.stax import serial, Dense, Tanh, elementwise, BatchNorm
+from jax.experimental.stax import (serial, parallel, Dense, Tanh, elementwise, BatchNorm, Identity,
+                                  FanInSum, FanOut, Sigmoid, Relu)
 from ebm.sampler import Sampler
 from model.maker.model_maker import net_maker
 
@@ -16,12 +17,12 @@ Swish = elementwise(swish)
 def mlp(out_ch):
     net = net_maker()
     for _ in range(2):
-        net.add_layer(serial(Dense(300), Swish))
-    net.add_layer(Dense(out_ch), name = "out")
+        net.add_layer(serial(Dense(500), Relu))
+    net.add_layer(serial(Dense(out_ch)), name = "out")
     return net.get_jax_model()
 
 def main():
-    LR = 1E-5
+    LR = 1E-3
     LAMBDA = 0.5
     BATCH_SIZE = 8
     X_SIZE = 2
@@ -132,7 +133,7 @@ def main():
         x_batch = jax.random.uniform(rng, (BATCH_SIZE, X_SIZE)) - 0.5
         
         pred = q_apply_fun(q_params, x_batch)
-        pred = jax.nn.sigmoid(pred) * 1.5295591
+        #pred = jax.nn.sigmoid(pred) * 1.5295591
         #assert(pred.min() >= 0)
         #assert(pred.max() <= 1.5295591)
         tgt  = Sampler.prob(x_batch)
@@ -141,7 +142,7 @@ def main():
         loss = (pred - tgt) ** 2
         loss = loss.sum() / x_batch.shape[0]
 
-        loss += 1E-4 * net_maker.weight_decay(q_params)
+        #loss += 1E-4 * net_maker.weight_decay(q_params)
         return loss
     
     rng = jax.random.PRNGKey(0)
