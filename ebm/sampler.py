@@ -92,6 +92,7 @@ def exect_plot():
     data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
     assert(data.shape == (bin_num * bin_num, 2))
     z = Sampler.prob(data)
+    print(z.mean())
     assert(z.shape == (bin_num * bin_num,))
     z = z.reshape((bin_num, bin_num))
     X = jnp.linspace(-0.5, 0.5, bin_num)
@@ -125,6 +126,6 @@ def main():
     plt.show()
 
 if __name__ == "__main__":
-    #exect_plot();exit()
+    exect_plot();exit()
     main()
     print("Done.")

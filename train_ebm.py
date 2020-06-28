@@ -1,11 +1,12 @@
 #coding: utf-8
-import os, time, pickle
+import os, time, pickle, argparse
 import numpy as np
 import jax
 from matplotlib import pyplot as plt
 from jax import numpy as jnp
 from jax.experimental import optimizers
-from jax.experimental.stax import serial, Dense, Tanh, elementwise, BatchNorm
+from jax.experimental.stax import  (serial, parallel, Dense, Tanh, elementwise, BatchNorm, Identity,
+                                    FanInSum, FanOut, Sigmoid, Relu)
 from ebm.sampler import Sampler
 from model.maker.model_maker import net_maker
 
@@ -16,17 +17,17 @@ Swish = elementwise(swish)
 def mlp(out_ch):
     net = net_maker()
     for _ in range(2):
-        net.add_layer(serial(Dense(300), Swish))
-    net.add_layer(Dense(out_ch), name = "out")
+        net.add_layer(serial(Dense(300), Relu))
+    net.add_layer(serial(Dense(out_ch)), name = "out")
     return net.get_jax_model()
 
-def main():
-    LR = 1E-5
+def main(is_training):
+    Q_LR = 1E-3
+    F_LR = 1E-3
     LAMBDA = 0.5
     BATCH_SIZE = 8
     X_SIZE = 2
-    TRAINING = True
-    C = 0
+    C = 5
 
     q_init_fun, q_apply_fun_raw = mlp(1)
     f_init_fun, f_apply_fun_raw = mlp(X_SIZE)
@@ -42,8 +43,8 @@ def main():
     def f_apply_fun(f_params, x, q_params):
         return exact_critic(q_params, f_params, x)
 
-    q_init, q_update, q_get_params = optimizers.adam(LR)
-    f_init, f_update, f_get_params = optimizers.adam(LR)
+    q_init, q_update, q_get_params = optimizers.adam(Q_LR)
+    f_init, f_update, f_get_params = optimizers.adam(F_LR)
 
     def exact_critic(   q_params,
                         f_params,
@@ -55,7 +56,11 @@ def main():
         assert(grad_x_log_q_val.shape == (x.size,))
 
         def log_p(x):
+            assert(x.ndim == 1)
+            x = x.reshape((1, x.size))  # reshape of 1-batch
             p = Sampler.prob(x)
+            if p.size == 1:
+                p = p.sum()
             return jnp.log(p)
         grad_x_log_p_fun = jax.grad(log_p)
         grad_x_log_p_val = grad_x_log_p_fun(x)
@@ -124,7 +129,7 @@ def main():
             lsd, _ = LSD(q_params, f_params, x, rng)
             target += lsd
         target /= x_batch.shape[0]
-        target += 1E-4 * net_maker.weight_decay(q_params)
+        #target += 1E-4 * net_maker.weight_decay(q_params)
         return target
     
     # discrimitive approach
@@ -132,7 +137,7 @@ def main():
         x_batch = jax.random.uniform(rng, (BATCH_SIZE, X_SIZE)) - 0.5
         
         pred = q_apply_fun(q_params, x_batch)
-        pred = jax.nn.sigmoid(pred) * 1.5295591
+        #pred = jax.nn.sigmoid(pred) * 1.5295591
         #assert(pred.min() >= 0)
         #assert(pred.max() <= 1.5295591)
         tgt  = Sampler.prob(x_batch)
@@ -141,7 +146,7 @@ def main():
         loss = (pred - tgt) ** 2
         loss = loss.sum() / x_batch.shape[0]
 
-        loss += 1E-4 * net_maker.weight_decay(q_params)
+        #loss += 1E-4 * net_maker.weight_decay(q_params)
         return loss
     
     rng = jax.random.PRNGKey(0)
@@ -170,9 +175,9 @@ def main():
     q_opt_state = q_init(q_init_params)
     f_opt_state = f_init(f_init_params)
     
-    while TRAINING:
+    while is_training:
         for c in range(C):
-            x_batch = sampler.sample()   # batch=1
+            x_batch = sampler.sample()
             assert(x_batch.shape == (BATCH_SIZE, X_SIZE))
             rng1, rng = jax.random.split(rng)
             f_loss_val, f_opt_state = f_opt_update(c_cnt, q_opt_state, f_opt_state, x_batch, rng1)
@@ -237,5 +242,10 @@ def trial():
     print((ans1 == ans2).all())
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-t", "--training", type = int)
+    args = parser.parse_args()
+
+    is_training = (args.training != 0)
+    main(is_training)
     print("Done.")
