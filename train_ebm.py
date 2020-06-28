@@ -5,8 +5,8 @@ import jax
 from matplotlib import pyplot as plt
 from jax import numpy as jnp
 from jax.experimental import optimizers
-from jax.experimental.stax import (serial, parallel, Dense, Tanh, elementwise, BatchNorm, Identity,
-                                  FanInSum, FanOut, Sigmoid, Relu)
+from jax.experimental.stax import  (serial, parallel, Dense, Tanh, elementwise, BatchNorm, Identity,
+                                    FanInSum, FanOut, Sigmoid, Relu)
 from ebm.sampler import Sampler
 from model.maker.model_maker import net_maker
 
@@ -17,7 +17,7 @@ Swish = elementwise(swish)
 def mlp(out_ch):
     net = net_maker()
     for _ in range(2):
-        net.add_layer(serial(Dense(500), Relu))
+        net.add_layer(serial(Dense(300), Relu))
     net.add_layer(serial(Dense(out_ch)), name = "out")
     return net.get_jax_model()
 
