@@ -43,15 +43,6 @@ class net_maker():
         self.__init_funs.append(init_fun)
         self.__apply_funs.append(apply_fun)
     
-    def __get_input_index(self, layer_index):
-        assert(layer_index > 0)
-        input_name = self.__input_names[layer_index]
-        if input_name is None:
-            return layer_index - 1
-        else:
-            assert(input_name in self.__names)
-            return self.__names.index(input_name)
-
     @staticmethod    
     def weight_decay(params):
         ret = 0.0
@@ -67,15 +58,32 @@ class net_maker():
         n_layers = len(self.__init_funs)
 
         # initialize-function of whole model
-        def init_fun(rng, input_shape):
+        def init_fun(rng, all_input_shape):
             params = []
             output_shapes = []
             
             for idx, init_fun in enumerate(self.__init_funs):
                 rng, layer_rng = jrandom.split(rng)
-                if idx > 0:
-                    input_shape = output_shapes[self.__get_input_index(idx)]
-                    assert input_shape is not None
+                if idx == 0:
+                    input_shape = all_input_shape
+                else:
+                    input_name = self.__input_names[idx]
+                    if input_name is None:
+                        input_shape = output_shapes[idx - 1]
+                    else:
+                        if isinstance(input_name, tuple):
+                            input_shape = tuple()
+                            for input_name1 in input_name:
+                                if input_name1 is None:
+                                    input_shape += (all_input_shape,)
+                                else:
+                                    assert(input_name1 in self.__names)
+                                    input_shape += (output_shapes[self.__names.index(input_name1)],)
+                        elif isinstance(input_name, str):
+                            assert(input_name in self.__names)
+                            input_shape = output_shapes[self.__names.index(input_name)]
+                        else:
+                            assert(0)
                 output_shape, param = init_fun(layer_rng, input_shape)
 
                 params.append(param)
@@ -84,17 +92,33 @@ class net_maker():
             return output_shape, params
 
         # apply-function of whole model
-        def apply_fun(params, inputs, **kwargs):
+        def apply_fun(params, all_inputs, **kwargs):
             final_output = {}
 
             rng = kwargs.pop('rng', None)
             rngs = jrandom.split(rng, n_layers) if rng is not None else (None,) * n_layers
             for idx, (param, apply_fun, name, input_name, rng) in enumerate(zip(params, self.__apply_funs, self.__names, self.__input_names, rngs)):
-                if idx > 0:
+                if idx == 0:
+                    inputs = all_inputs
+                else:
+                    # except first layer, replace input
                     if input_name is None:
+                        # by previous layer
                         inputs = output
                     else:
-                        inputs = final_output[input_name]
+                        # by specific layer
+                        if isinstance(input_name, tuple):
+                            inputs = tuple()
+                            for input_name1 in input_name:
+                                if input_name1 is None:
+                                    inputs += (all_inputs,)
+                                else:
+                                    inputs += (final_output[input_name1],)
+                        elif isinstance(input_name, str):
+                            assert(input_name in final_output.keys())
+                            inputs = final_output[input_name]
+                        else:
+                            assert(0)
                 output = apply_fun(param, inputs, rng=rng, **kwargs)    # apply
                 if name is not None:
                     final_output[name] = output

@@ -14,11 +14,45 @@ def swish(x):
     return x / (1.0 + jnp.exp(- x))
 Swish = elementwise(swish)
 
-def mlp(out_ch):
+def ProdGaussian():
+    def init_fun(rng, input_shape_tuple, mu_init = jax.nn.initializers.zeros, sigma_init = jax.nn.initializers.ones):
+        input_shape, x_shape = input_shape_tuple
+        output_shape = input_shape
+        k_mu, k_sigma = jax.random.split(rng)
+        mu_shape = x_shape[1:]
+        if not isinstance(mu_shape, tuple):
+            mu_shape = (mu_shape,)
+        mu = mu_init(k_mu, mu_shape)
+        sigma = sigma_init(k_sigma, (1,))
+        return output_shape, (mu, sigma)
+    def apply_fun(params, input_tuple, **kwargs):
+        mu, sigma = params
+        base_val, x = input_tuple
+        assert(x.ndim <= 2)
+        if x.ndim > 1:
+            axis = tuple(jnp.arange(1, x.ndim))
+            assert(base_val.shape[1] == 1)
+        else:
+            axis = None
+
+        output_val = base_val - ((x - mu) ** 2).sum(axis = axis).reshape(-1, 1) / (2.0 * (sigma ** 2))
+        return output_val
+    return init_fun, apply_fun
+
+activate = Relu
+def q_net():
     net = net_maker()
     for _ in range(2):
-        net.add_layer(serial(Dense(300), Relu))
-    net.add_layer(serial(Dense(out_ch)), name = "out")
+        net.add_layer(serial(Dense(300), activate))
+    net.add_layer(Dense(1), name = "raw")
+    net.add_layer(ProdGaussian(), name = "out", input_name = ("raw", None))
+    return net.get_jax_model()
+
+def f_net(out_ch):
+    net = net_maker()
+    for _ in range(2):
+        net.add_layer(serial(Dense(300), activate))
+    net.add_layer(Dense(out_ch), name = "out")
     return net.get_jax_model()
 
 def main(is_training):
@@ -29,8 +63,8 @@ def main(is_training):
     X_SIZE = 2
     C = 5
 
-    q_init_fun, q_apply_fun_raw = mlp(1)
-    f_init_fun, f_apply_fun_raw = mlp(X_SIZE)
+    q_init_fun, q_apply_fun_raw = q_net()
+    f_init_fun, f_apply_fun_raw = f_net(X_SIZE)
     def q_apply_fun(params, x):
         ret = q_apply_fun_raw(params, x)["out"]
         if ret.size == 1:
@@ -169,9 +203,9 @@ def main(is_training):
         print("LOADED INIT PARAMS")
     else:
         rng_q, rng_f, rng = jax.random.split(rng, 3)
-        _, q_init_params = q_init_fun(rng_q, input_shape = (BATCH_SIZE, X_SIZE))
+        _, q_init_params = q_init_fun(rng_q, (BATCH_SIZE, X_SIZE))
         rng1, rng = jax.random.split(rng)
-        _, f_init_params = f_init_fun(rng_f, input_shape = (BATCH_SIZE, X_SIZE))
+        _, f_init_params = f_init_fun(rng_f, (BATCH_SIZE, X_SIZE))
     q_opt_state = q_init(q_init_params)
     f_opt_state = f_init(f_init_params)
     
@@ -206,9 +240,10 @@ def main(is_training):
                 pickle.dump(f_get_params(f_opt_state), f)
     
     bin_num = 100
-    x = jnp.linspace(-0.5, 0.5, bin_num)
+    delta = 0.5
+    x = jnp.linspace(-delta, delta, bin_num)
     x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
-    y = jnp.linspace(-0.5, 0.5, bin_num)
+    y = jnp.linspace(-delta, delta, bin_num)
     y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
     data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
     assert(data.shape == (bin_num * bin_num, 2))
@@ -216,8 +251,8 @@ def main(is_training):
     assert(minus_E.shape == (bin_num * bin_num, 1))
     unnorm_log_q = minus_E
     unnorm_log_q = unnorm_log_q.reshape((bin_num, bin_num))
-    X = jnp.linspace(-0.5, 0.5, bin_num)
-    Y = jnp.linspace(-0.5, 0.5, bin_num)
+    X = jnp.linspace(-delta, delta, bin_num)
+    Y = jnp.linspace(-delta, delta, bin_num)
     X, Y = jnp.meshgrid(X, Y)
     plt.pcolor(X, Y, unnorm_log_q)
     plt.colorbar()
