@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from tqdm import tqdm
-PROB_TYPE = "triangle"
+PROB_TYPE = "center_wave"
 
 class Sampler:
     def __init__(self, rng, batch_size):
@@ -41,9 +41,9 @@ class Sampler:
         assert(x.shape[-1] == 2)
 
         if PROB_TYPE == "center_wave":
-            delta_r = 0.2
+            delta_r = 0.175
             top_num = 3
-            sigma = 0.05
+            sigma = 0.06
             cx = 0.0
             cy = 0.0
 

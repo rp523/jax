@@ -10,9 +10,17 @@ from jax.experimental.stax import  (serial, parallel, Dense, Tanh, elementwise, 
 from ebm.sampler import Sampler
 from model.maker.model_maker import net_maker
 
-def swish(x):
-    return x / (1.0 + jnp.exp(- x))
-Swish = elementwise(swish)
+def Swish():
+    def init_fun(rng, input_shape):
+        beta_shape = tuple(input_shape[1:])
+        beta = jax.nn.initializers.ones(rng, beta_shape)
+        params = (beta,)
+        output_shape = input_shape
+        return output_shape, params
+    def apply_fun(params, inputs, **kwargs):
+        beta = params[0]
+        return inputs / (1.0 + jnp.exp(- beta * inputs))
+    return init_fun, apply_fun
 
 def ProdGaussian():
     def init_fun(rng, input_shape_tuple, mu_init = jax.nn.initializers.zeros, sigma_init = jax.nn.initializers.ones):
@@ -39,7 +47,7 @@ def ProdGaussian():
         return output_val
     return init_fun, apply_fun
 
-activate = Relu
+activate = Swish()
 def q_net():
     net = net_maker()
     for _ in range(2):
@@ -77,8 +85,8 @@ def main(is_training):
     def f_apply_fun(f_params, x, q_params):
         return exact_critic(q_params, f_params, x)
 
-    q_init, q_update, q_get_params = optimizers.adam(Q_LR)
-    f_init, f_update, f_get_params = optimizers.adam(F_LR)
+    q_init, q_update, q_get_params = optimizers.adam(Q_LR, b1=0.5, b2=0.9)
+    f_init, f_update, f_get_params = optimizers.adam(F_LR, b1=0.5, b2=0.9)
 
     def exact_critic(   q_params,
                         f_params,
@@ -169,7 +177,7 @@ def main(is_training):
     # discrimitive approach
     def q_loss_d(q_params, f_params, x_batch_biased, rng):
         x_batch = jax.random.uniform(rng, (BATCH_SIZE, X_SIZE)) - 0.5
-        
+
         pred = q_apply_fun(q_params, x_batch)
         #pred = jax.nn.sigmoid(pred) * 1.5295591
         #assert(pred.min() >= 0)
