@@ -5,3 +5,4 @@ dataset/__pycache__/cityscapes.cpython-37.pyc
 __pycache__/checkpoint.cpython-37.pyc
 ebm/__pycache__/sampler.cpython-37.pyc
 test.py
+ebm/sampler.py.bak

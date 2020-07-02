@@ -47,11 +47,14 @@ def ProdGaussian():
         return output_val
     return init_fun, apply_fun
 
+def SkipDense(unit_num):
+    return serial(FanOut(2), parallel(Dense(unit_num), Identity), FanInSum)
+
 activate = Swish()
 def q_net():
     net = net_maker()
     for _ in range(2):
-        net.add_layer(serial(Dense(300), activate))
+        net.add_layer(serial(SkipDense(300), activate))
     net.add_layer(Dense(1), name = "raw")
     net.add_layer(ProdGaussian(), name = "out", input_name = ("raw", None))
     return net.get_jax_model()
