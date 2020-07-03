@@ -22,7 +22,7 @@ def Swish():
         return inputs / (1.0 + jnp.exp(- beta * inputs))
     return init_fun, apply_fun
 
-def ProdGaussian():
+def ProdGaussian(scale):
     def init_fun(rng, input_shape_tuple, mu_init = jax.nn.initializers.zeros, sigma_init = jax.nn.initializers.ones):
         input_shape, x_shape = input_shape_tuple
         output_shape = input_shape
@@ -31,7 +31,7 @@ def ProdGaussian():
         if not isinstance(mu_shape, tuple):
             mu_shape = (mu_shape,)
         mu = mu_init(k_mu, mu_shape)
-        sigma = sigma_init(k_sigma, (1,))
+        sigma = sigma_init(k_sigma, (1,)) * scale
         return output_shape, (mu, sigma)
     def apply_fun(params, input_tuple, **kwargs):
         mu, sigma = params
@@ -50,19 +50,20 @@ def ProdGaussian():
 def SkipDense(unit_num):
     return serial(FanOut(2), parallel(Dense(unit_num), Identity), FanInSum)
 
-activate = Swish()
-def q_net():
+def q_net(scale):
     net = net_maker()
-    for _ in range(2):
-        net.add_layer(serial(SkipDense(300), activate))
+    net.add_layer(serial(Dense(300), Swish()))
+    for _ in range(1):
+        net.add_layer(serial(SkipDense(300), Swish()))
     net.add_layer(Dense(1), name = "raw")
-    net.add_layer(ProdGaussian(), name = "out", input_name = ("raw", None))
+    net.add_layer(ProdGaussian(scale), name = "out", input_name = ("raw", None))
     return net.get_jax_model()
 
 def f_net(out_ch):
     net = net_maker()
-    for _ in range(2):
-        net.add_layer(serial(Dense(300), activate))
+    net.add_layer(serial(Dense(300), Swish()))
+    for _ in range(1):
+        net.add_layer(serial(Dense(300), Swish()))
     net.add_layer(Dense(out_ch), name = "out")
     return net.get_jax_model()
 
@@ -73,8 +74,9 @@ def main(is_training):
     BATCH_SIZE = 8
     X_SIZE = 2
     C = 5
+    half_band = 10.0
 
-    q_init_fun, q_apply_fun_raw = q_net()
+    q_init_fun, q_apply_fun_raw = q_net(half_band)
     f_init_fun, f_apply_fun_raw = f_net(X_SIZE)
     def q_apply_fun(params, x):
         ret = q_apply_fun_raw(params, x)["out"]
@@ -179,9 +181,9 @@ def main(is_training):
     
     # discrimitive approach
     def q_loss_d(q_params, f_params, x_batch_biased, rng):
-        x_batch = jax.random.uniform(rng, (BATCH_SIZE, X_SIZE)) - 0.5
+        x_batch = (jax.random.uniform(rng, (BATCH_SIZE, X_SIZE)) - 0.5) / 0.5 * half_band
 
-        pred = q_apply_fun(q_params, x_batch)
+        pred = q_apply_fun(q_params, x_batch / half_band)
         #pred = jax.nn.sigmoid(pred) * 1.5295591
         #assert(pred.min() >= 0)
         #assert(pred.max() <= 1.5295591)
@@ -251,22 +253,23 @@ def main(is_training):
                 pickle.dump(f_get_params(f_opt_state), f)
     
     bin_num = 100
-    delta = 0.5
-    x = jnp.linspace(-delta, delta, bin_num)
+    plot_band = half_band * 1
+    x = jnp.linspace(-plot_band, plot_band, bin_num)
     x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
-    y = jnp.linspace(-delta, delta, bin_num)
+    y = jnp.linspace(-plot_band, plot_band, bin_num)
     y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
     data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
     assert(data.shape == (bin_num * bin_num, 2))
-    minus_E = q_apply_fun(q_init_params, data)
+    minus_E = q_apply_fun(q_init_params, data / half_band)
     assert(minus_E.shape == (bin_num * bin_num, 1))
     unnorm_log_q = minus_E
     unnorm_log_q = unnorm_log_q.reshape((bin_num, bin_num))
-    X = jnp.linspace(-delta, delta, bin_num)
-    Y = jnp.linspace(-delta, delta, bin_num)
+    X = jnp.linspace(-plot_band, plot_band, bin_num)
+    Y = jnp.linspace(-plot_band, plot_band, bin_num)
     X, Y = jnp.meshgrid(X, Y)
     plt.pcolor(X, Y, unnorm_log_q)
     plt.colorbar()
+    print(q_init_params[-1][1][0])
     plt.show()
 
 def trial():
