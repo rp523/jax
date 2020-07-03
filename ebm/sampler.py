@@ -41,9 +41,9 @@ class Sampler:
         assert(x.shape[-1] == 2)
 
         if PROB_TYPE == "center_wave":
-            delta_r = 0.175
+            delta_r = 0.35
             top_num = 3
-            sigma = 0.06
+            sigma = 0.1
             cx = 0.0
             cy = 0.0
 
@@ -84,19 +84,20 @@ class Sampler:
         return ret
 
 def exect_plot():
-    bin_num = 100
-    x = jnp.linspace(-0.5, 0.5, bin_num)
+    bin_num = 256
+    band = 10.0
+    x = jnp.linspace(-band, band, bin_num)
     x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
-    y = jnp.linspace(-0.5, 0.5, bin_num)
+    y = jnp.linspace(-band, band, bin_num)
     y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
     data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
     assert(data.shape == (bin_num * bin_num, 2))
-    z = Sampler.prob(data)
+    z = Sampler.prob(data / band)
     print(z.mean())
     assert(z.shape == (bin_num * bin_num,))
     z = z.reshape((bin_num, bin_num))
-    X = jnp.linspace(-0.5, 0.5, bin_num)
-    Y = jnp.linspace(-0.5, 0.5, bin_num)
+    X = jnp.linspace(-band, band, bin_num)
+    Y = jnp.linspace(-band, band, bin_num)
     X, Y = jnp.meshgrid(X, Y)
     plt.pcolor(X, Y, z)
     plt.colorbar()
