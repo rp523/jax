@@ -36,14 +36,14 @@ def tgt_fun(x):
     if x.ndim == 2:
         #y *= jnp.sin(x.T[1])
         pass
-    return y
+    return y * 0.1
 
 def main(is_training):
-    LR = 1E-3
+    LR = 1E-5
     BATCH_SIZE = 32
-    X_DIM = 1
+    X_DIM = 2
     SAVE_PATH = "simple.bin"
-    broaden_rate = 4
+    broaden_rate = 1
     half = 4 * jnp.pi * broaden_rate
     band = half * 2
 
