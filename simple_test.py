@@ -3,7 +3,7 @@ import os, time, pickle, argparse
 import jax
 import jax.numpy as jnp
 from matplotlib import pyplot as plt
-from jax.experimental.stax import serial, parallel, Dense, Sigmoid, FanOut, FanInSum, Identity
+from jax.experimental.stax import serial, parallel, Dense, Sigmoid, FanOut, FanInSum, Identity, BatchNorm
 from jax.experimental import optimizers
 
 from model.maker.model_maker import net_maker
@@ -23,24 +23,52 @@ def Swish():
         return inputs / (1.0 + jnp.exp(- beta * inputs))
     return init_fun, apply_fun
 
+def ProdGaussian(scale):
+    def init_fun(rng, input_shape_tuple, mu_init = jax.nn.initializers.zeros, sigma_init = jax.nn.initializers.ones):
+        input_shape, x_shape = input_shape_tuple
+        output_shape = input_shape
+        k_mu, k_sigma = jax.random.split(rng)
+        mu_shape = x_shape[1:]
+        if not isinstance(mu_shape, tuple):
+            mu_shape = (mu_shape,)
+        mu = mu_init(k_mu, mu_shape)
+        sigma = sigma_init(k_sigma, (1,)) * scale
+        return output_shape, (mu, sigma)
+    def apply_fun(params, input_tuple, **kwargs):
+        mu, sigma = params
+        base_val, x = input_tuple
+        assert(x.ndim <= 2)
+        if x.ndim > 1:
+            axis = tuple(jnp.arange(1, x.ndim))
+            assert(base_val.shape[1] == 1)
+        else:
+            axis = None
+        power = -((x - mu) ** 2).sum(axis = axis).reshape(-1, 1) / (2.0 * (sigma ** 2))
+        output_val = base_val * jnp.exp(power)
+        return output_val
+    return init_fun, apply_fun
+
 def Net():
     unit_num = 1000
     net = net_maker()
     net.add_layer(serial(Dense(unit_num), Swish()))
     for _ in range(10):
         net.add_layer(serial(SkipDense(unit_num), Swish()))
-    net.add_layer(Dense(1), name = "out")
+    net.add_layer(serial(Dense(1)), name = "raw")
+    net.add_layer(ProdGaussian(5), name = "out", input_name = ("raw", None))
     return net.get_jax_model()
 
 def tgt_fun(x):
-    y = jnp.cos(x.T[0])#
+    r = (x.T[0] ** 2 + x.T[1] ** 2) ** 0.5
+    y = jnp.zeros((x.shape[0], 1))
+    y += jnp.exp(-(r - 5) ** 2 / 2).reshape((-1, 1))
     if x.ndim == 2:
         #y *= jnp.sin(x.T[1])
         pass
-    return y * 1E-2
+    return y * 1E-3
 
 def main(is_training):
-    LR = 1E-5
+    LR = 1E-6
     BATCH_SIZE = 32
     X_DIM = 2
     SAVE_PATH = "simple.bin"
