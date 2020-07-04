@@ -93,8 +93,8 @@ def main(is_training):
     y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
     data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
     assert(data.shape == (bin_num * bin_num, 2))
-    #minus_E = apply_fun(init_params, data / plot_band)["out"]
-    minus_E = tgt_fun(data / plot_band)
+    #minus_E = apply_fun(init_params, data / broaden_rate)["out"]
+    minus_E = tgt_fun(data / broaden_rate)
     unnorm_log_q = minus_E
     unnorm_log_q = unnorm_log_q.reshape((bin_num, bin_num))
     print(unnorm_log_q.min(), unnorm_log_q.max())
