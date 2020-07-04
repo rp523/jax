@@ -24,10 +24,11 @@ def Swish():
     return init_fun, apply_fun
 
 def Net():
+    unit_num = 1000
     net = net_maker()
-    net.add_layer(serial(Dense(300), Swish()))
-    for _ in range(1):
-        net.add_layer(serial(Dense(300), Swish()))
+    net.add_layer(serial(Dense(unit_num), Swish()))
+    for _ in range(10):
+        net.add_layer(serial(SkipDense(unit_num), Swish()))
     net.add_layer(Dense(1), name = "out")
     return net.get_jax_model()
 
@@ -36,7 +37,7 @@ def tgt_fun(x):
     if x.ndim == 2:
         #y *= jnp.sin(x.T[1])
         pass
-    return y * 0.1
+    return y * 1E-2
 
 def main(is_training):
     LR = 1E-5
@@ -70,6 +71,27 @@ def main(is_training):
         loss_val, grad_val = jax.value_and_grad(loss)(params, x, y)
         return loss_val, opt_update(i, grad_val, opt_state)
     
+    def save_img(params):
+        bin_num = 100
+        plot_band = half * 1
+        x = jnp.linspace(-plot_band, plot_band, bin_num)
+        x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
+        y = jnp.linspace(-plot_band, plot_band, bin_num)
+        y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
+        data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
+        assert(data.shape == (bin_num * bin_num, 2))
+        minus_E = apply_fun(params, data / broaden_rate)["out"]
+        #minus_E = tgt_fun(data / broaden_rate)
+        unnorm_log_q = minus_E
+        unnorm_log_q = unnorm_log_q.reshape((bin_num, bin_num))
+        X = jnp.linspace(-plot_band, plot_band, bin_num)
+        Y = jnp.linspace(-plot_band, plot_band, bin_num)
+        X, Y = jnp.meshgrid(X, Y)
+        plt.clf()
+        plt.pcolor(X, Y, unnorm_log_q)
+        plt.colorbar()
+        plt.savefig("simple.png")
+
     t0 = time.time()
     e = 0
     while is_training:
@@ -82,27 +104,8 @@ def main(is_training):
             t0 = t1
             print(e, loss_val)
             pickle.dump(get_params(opt_state), open(SAVE_PATH, "wb"))
+            save_img(get_params(opt_state))
         e += 1
-
-    bin_num = 100
-    plot_band = half * 1
-    x = jnp.linspace(-plot_band, plot_band, bin_num)
-    x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
-    y = jnp.linspace(-plot_band, plot_band, bin_num)
-    y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
-    data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
-    assert(data.shape == (bin_num * bin_num, 2))
-    minus_E = apply_fun(init_params, data / broaden_rate)["out"]
-    #minus_E = tgt_fun(data / broaden_rate)
-    unnorm_log_q = minus_E
-    unnorm_log_q = unnorm_log_q.reshape((bin_num, bin_num))
-    print(unnorm_log_q.min(), unnorm_log_q.max())
-    X = jnp.linspace(-plot_band, plot_band, bin_num)
-    Y = jnp.linspace(-plot_band, plot_band, bin_num)
-    X, Y = jnp.meshgrid(X, Y)
-    plt.pcolor(X, Y, unnorm_log_q)
-    plt.colorbar()
-    plt.show()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
