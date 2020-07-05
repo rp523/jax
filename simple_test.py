@@ -5,9 +5,10 @@ import jax.numpy as jnp
 from matplotlib import pyplot as plt
 from jax.experimental.stax import serial, parallel, Dense, Sigmoid, FanOut, FanInSum, Identity, BatchNorm
 from jax.experimental import optimizers
-
 from model.maker.model_maker import net_maker
 from ebm.sampler import Sampler
+MODE = "discriminative"
+#MODE = "generative"
 
 def SkipDense(unit_num):
     return serial(FanOut(2), parallel(Dense(unit_num), Identity), FanInSum)
@@ -44,8 +45,11 @@ def ProdGaussian(scale):
             assert(base_val.shape[1] == 1)
         else:
             axis = None
-        power = -((x - mu) ** 2).sum(axis = axis).reshape(-1, 1) / (2.0 * (sigma ** 2))
-        output_val = base_val * jnp.exp(power)
+        negative_energy = -((x - mu) ** 2).sum(axis = axis).reshape(-1, 1) / (2.0 * (sigma ** 2))
+        if MODE == "generative":
+            output_val = base_val + negative_energy
+        elif MODE == "discriminative":
+            output_val = base_val * jnp.exp(negative_energy)
         return output_val
     return init_fun, apply_fun
 
@@ -106,14 +110,14 @@ def main(is_training):
     f_opt_state = f_opt_init(f_init_params)
 
     def q_loss(q_params, f_params, rng):
-        if 0:
+        if MODE == "generative":
             loss = 0.0
             x_batch = sampler.sample()
             for x in x_batch:
                 lsd, _ = LSD(q_params, f_params, x, rng)
                 loss += lsd
             loss /= x_batch.shape[0]
-        else:
+        elif MODE == "discriminative":
             x = jax.random.uniform(rng, (BATCH_SIZE, X_DIM)) * band - half
             p = q_apply_fun(q_params, x)
             y = tgt_fun(x).reshape((-1, 1))
