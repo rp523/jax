@@ -7,21 +7,31 @@ from tqdm import tqdm
 PROB_TYPE = "center_wave"
 
 class Sampler:
-    def __init__(self, rng, batch_size):
-        self.__maker = Sampler.__Maker(rng, batch_size)
+    def __init__(self, rng, batch_size, half_band):
+        self.__maker = Sampler.__Maker(rng, batch_size, half_band)
 
     def sample(self):
         return next(self.__maker)
 
     @staticmethod
-    def __Maker(rng, batch_size):
+    def __Maker(rng, batch_size, half_band):
+        bin_num = max(batch_size * 2, 256)
+        x = jnp.linspace(-half_band, half_band, bin_num)
+        x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
+        y = jnp.linspace(-half_band, half_band, bin_num)
+        y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
+        data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
+        assert(data.shape == (bin_num * bin_num, 2))
+        z = Sampler.prob(data)
+        max_val = z.max()
+
         split_num = 8
         xy = jnp.zeros((batch_size, 2), dtype = jnp.float32)
         sampled_num = 0
         while True:
             rng_x, rng_p, rng = jax.random.split(rng, 3)
-            x = jax.random.uniform(rng_x, (split_num, 2)) - 0.5
-            p = jax.random.uniform(rng_p, (split_num,)  )
+            x = (jax.random.uniform(rng_x, (split_num, 2)) * 2 - 1) * half_band
+            p = jax.random.uniform(rng_p, (split_num,)) * max_val
             is_valid = (p < Sampler.prob(x))
             assert(is_valid.shape == (split_num,))
             valid_num = is_valid.sum()
@@ -42,7 +52,7 @@ class Sampler:
 
         if PROB_TYPE == "center_wave":
             delta_r = 7.5
-            sigma = 1
+            sigma = 3
 
             cx = 0.0
             cy = 0.0
@@ -52,6 +62,7 @@ class Sampler:
             r = (rx ** 2 + ry ** 2) ** 0.5
 
             ret = jnp.exp(- ((r - delta_r) ** 2) / (2 * sigma ** 2))
+            ret = ret / 0.389008
         elif PROB_TYPE == "block":
             ret = 0.0
             split_num = 5
@@ -79,18 +90,18 @@ class Sampler:
                 lined_x = -jnp.dot(rot_mat, x.T)[1]
                 weight = jax.nn.sigmoid(-(lined_x - delta) / sigma)
                 ret *= (weight)
-        return ret * 1E-3
+        return ret
 
 def exect_plot():
     bin_num = 256
-    band = 10.0
+    band = 15.0
     x = jnp.linspace(-band, band, bin_num)
     x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
     y = jnp.linspace(-band, band, bin_num)
     y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
     data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
     assert(data.shape == (bin_num * bin_num, 2))
-    z = Sampler.prob(data / band)
+    z = Sampler.prob(data)
     print(z.mean())
     assert(z.shape == (bin_num * bin_num,))
     z = z.reshape((bin_num, bin_num))
@@ -106,7 +117,8 @@ def main():
     rng = jax.random.PRNGKey(0)
     SAMPLE_NUM = 100000
     BATCH_SIZE = 1000
-    s = Sampler(rng, batch_size = BATCH_SIZE)
+    half_band = 15
+    s = Sampler(rng, batch_size = BATCH_SIZE, half_band = half_band)
     x_vec = jnp.zeros(SAMPLE_NUM, dtype = jnp.float32)
     y_vec = jnp.zeros(SAMPLE_NUM, dtype = jnp.float32)
     for i in tqdm(range(SAMPLE_NUM // BATCH_SIZE)):
@@ -125,6 +137,6 @@ def main():
     plt.show()
 
 if __name__ == "__main__":
-    exect_plot();exit()
+    #exect_plot();exit()
     main()
     print("Done.")
