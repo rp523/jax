@@ -76,7 +76,7 @@ def tgt_fun(x):
     return Sampler.prob(x) * 1E-2
 
 def main(is_training):
-    LR = 1E-6
+    LR = 1E-5
     LAMBDA = 0.5
     BATCH_SIZE = 8
     X_DIM = 2
