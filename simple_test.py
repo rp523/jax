@@ -48,24 +48,31 @@ def ProdGaussian(scale):
         return output_val
     return init_fun, apply_fun
 
-def Net():
+def Net(scale):
     unit_num = 1000
     net = net_maker()
     net.add_layer(serial(Dense(unit_num), Swish()))
     for _ in range(10):
         net.add_layer(serial(SkipDense(unit_num), Swish()))
     net.add_layer(serial(Dense(1)), name = "raw")
-    net.add_layer(ProdGaussian(5), name = "out", input_name = ("raw", None))
+    net.add_layer(ProdGaussian(scale), name = "out", input_name = ("raw", None))
     return net.get_jax_model()
 
 def tgt_fun(x):
-    r = (x.T[0] ** 2 + x.T[1] ** 2) ** 0.5
-    y = jnp.zeros((x.shape[0], 1))
-    y += jnp.exp(-(r - 5) ** 2 / 2).reshape((-1, 1))
-    if x.ndim == 2:
-        #y *= jnp.sin(x.T[1])
-        pass
-    return y * 1E-3
+    top_num = 1
+    delta_r = 5
+    sigma = 1
+
+    cx = 0.0
+    cy = 0.0
+
+    rx = x.T[0] - cx
+    ry = x.T[1] - cy
+    r = (rx ** 2 + ry ** 2) ** 0.5
+
+    ret = jnp.exp(- ((r - delta_r) ** 2) / (2 * sigma ** 2))
+    ret *= 1E-3
+    return ret.reshape((x.shape[0], 1))
 
 def main(is_training):
     LR = 1E-6
@@ -76,7 +83,7 @@ def main(is_training):
     half = 4 * jnp.pi * broaden_rate
     band = half * 2
 
-    init_fun, apply_fun = Net()
+    init_fun, apply_fun = Net(5)
     opt_init, opt_update, get_params = optimizers.adam(LR)
     
     rng = jax.random.PRNGKey(0)
@@ -90,8 +97,10 @@ def main(is_training):
     def loss(params, x, y):
         p = apply_fun(params, x)["out"]
         y = y.reshape((-1, 1))
+        def smooth_l1(x):
+            return (0.5 * x ** 2) * (jnp.abs(x) < 1) + (jnp.abs(x) - 0.5) * (jnp.abs(x) >= 1)
         assert(p.shape == y.shape)
-        return ((p - y) ** 2).sum() / x.shape[0]
+        return smooth_l1(p - y).sum() / x.shape[0]
 
     @jax.jit
     def update(i, opt_state, x, y):
