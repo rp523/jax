@@ -7,6 +7,7 @@ from jax.experimental.stax import serial, parallel, Dense, Sigmoid, FanOut, FanI
 from jax.experimental import optimizers
 
 from model.maker.model_maker import net_maker
+from ebm.sampler import Sampler
 
 def SkipDense(unit_num):
     return serial(FanOut(2), parallel(Dense(unit_num), Identity), FanInSum)
@@ -59,20 +60,7 @@ def Net(scale):
     return net.get_jax_model()
 
 def tgt_fun(x):
-    top_num = 1
-    delta_r = 5
-    sigma = 1
-
-    cx = 0.0
-    cy = 0.0
-
-    rx = x.T[0] - cx
-    ry = x.T[1] - cy
-    r = (rx ** 2 + ry ** 2) ** 0.5
-
-    ret = jnp.exp(- ((r - delta_r) ** 2) / (2 * sigma ** 2))
-    ret *= 1E-3
-    return ret.reshape((x.shape[0], 1))
+    return Sampler.prob(x)
 
 def main(is_training):
     LR = 1E-6
@@ -80,7 +68,7 @@ def main(is_training):
     X_DIM = 2
     SAVE_PATH = "simple.bin"
     broaden_rate = 1
-    half = 4 * jnp.pi * broaden_rate
+    half = 15
     band = half * 2
 
     init_fun, apply_fun = Net(5)

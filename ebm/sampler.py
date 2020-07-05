@@ -41,9 +41,9 @@ class Sampler:
         assert(x.shape[-1] == 2)
 
         if PROB_TYPE == "center_wave":
-            delta_r = 0.35
-            top_num = 3
-            sigma = 0.1
+            delta_r = 7.5
+            sigma = 1
+
             cx = 0.0
             cy = 0.0
 
@@ -51,9 +51,7 @@ class Sampler:
             ry = x.T[1] - cy
             r = (rx ** 2 + ry ** 2) ** 0.5
 
-            ret = 0.0
-            for i in range(top_num):
-                ret += jnp.exp(- ((r - (i + 0.5) * delta_r) ** 2) / (2 * sigma ** 2))
+            ret = jnp.exp(- ((r - delta_r) ** 2) / (2 * sigma ** 2))
         elif PROB_TYPE == "block":
             ret = 0.0
             split_num = 5
@@ -81,7 +79,7 @@ class Sampler:
                 lined_x = -jnp.dot(rot_mat, x.T)[1]
                 weight = jax.nn.sigmoid(-(lined_x - delta) / sigma)
                 ret *= (weight)
-        return ret
+        return ret * 1E-3
 
 def exect_plot():
     bin_num = 256
