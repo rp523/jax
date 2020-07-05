@@ -74,7 +74,7 @@ def tgt_fun(x):
 def main(is_training):
     LR = 1E-6
     LAMBDA = 0.5
-    BATCH_SIZE = 4
+    BATCH_SIZE = 8
     X_DIM = 2
     SAVE_PATH = "simple.bin"
     half = 15
@@ -105,7 +105,7 @@ def main(is_training):
     q_opt_state = q_opt_init(q_init_params)
     f_opt_state = f_opt_init(f_init_params)
 
-    def q_loss(q_params, f_params):
+    def q_loss(q_params, f_params, rng):
         if 0:
             loss = 0.0
             x_batch = sampler.sample()
@@ -182,7 +182,7 @@ def main(is_training):
     def q_update(i, q_opt_state, f_opt_state, rng):
         q_params = q_get_params(q_opt_state)
         f_params = f_get_params(f_opt_state)
-        loss_val, grad_val = jax.value_and_grad(q_loss, argnums = 0)(q_params, f_params)
+        loss_val, grad_val = jax.value_and_grad(q_loss, argnums = 0)(q_params, f_params, rng)
         return loss_val, q_opt_update(i, grad_val, q_opt_state)
     
     def save_img(q_params):
