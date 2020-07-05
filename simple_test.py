@@ -9,6 +9,7 @@ from model.maker.model_maker import net_maker
 from ebm.sampler import Sampler
 MODE = "discriminative"
 #MODE = "generative"
+TRAIN_CRITIC = False
 
 def SkipDense(unit_num):
     return serial(FanOut(2), parallel(Dense(unit_num), Identity), FanInSum)
@@ -80,6 +81,7 @@ def main(is_training):
     LAMBDA = 0.5
     BATCH_SIZE = 8
     X_DIM = 2
+    T = 100
     SAVE_PATH = "simple.bin"
     half = 15
     band = half * 2
@@ -92,7 +94,11 @@ def main(is_training):
             ret = ret.sum()
         return ret
     def f_apply_fun(f_params, x, q_params):
-        return exact_critic(q_params, f_params, x)
+        if TRAIN_CRITIC:
+            ret = f_apply_fun_raw(f_params, x)["out"]
+        else:
+            ret = exact_critic(q_params, f_params, x)
+        return ret
     q_opt_init, q_opt_update, q_get_params = optimizers.adam(LR, b1=0.5, b2=0.9)
     f_opt_init, f_opt_update, f_get_params = optimizers.adam(LR, b1=0.5, b2=0.9)
     
@@ -109,14 +115,24 @@ def main(is_training):
     q_opt_state = q_opt_init(q_init_params)
     f_opt_state = f_opt_init(f_init_params)
 
+    def aveLSD(q_params, f_params):
+        loss = 0.0
+        sum_lsd = 0.0
+        sum_fnrm = 0.0
+        for x in sampler.sample():
+            lsd, fnrm = LSD(q_params, f_params, x, rng)
+            sum_lsd += lsd
+            sum_fnrm += fnrm
+        ave_lsd  = sum_lsd  / BATCH_SIZE
+        ave_fnrm = sum_fnrm / BATCH_SIZE
+        return ave_lsd, ave_fnrm
+
     def q_loss(q_params, f_params, rng):
         if MODE == "generative":
-            loss = 0.0
-            x_batch = sampler.sample()
-            for x in x_batch:
-                lsd, _ = LSD(q_params, f_params, x, rng)
-                loss += lsd
-            loss /= x_batch.shape[0]
+            ave_lsd, ave_fnrm = aveLSD(q_params, f_params)
+            loss = ave_lsd
+            loss += 1E-4 * net_maker.weight_decay(q_params)
+            return loss
         elif MODE == "discriminative":
             x = jax.random.uniform(rng, (BATCH_SIZE, X_DIM)) * band - half
             p = q_apply_fun(q_params, x)
@@ -126,6 +142,12 @@ def main(is_training):
             assert(p.shape == y.shape)
             loss = smooth_l1(p - y).sum() / x.shape[0]
         return loss
+    def f_loss(q_params, f_params, rng):
+        ave_lsd, ave_fnrm = aveLSD(q_params, f_params)
+        loss = ave_lsd
+        loss -= 1E-4 * net_maker.weight_decay(q_params)
+        loss -= LAMBDA * ave_fnrm
+        return -loss    # flip sign to maximize
     def exact_critic(   q_params,
                         f_params,
                         x,  # NO batch
@@ -188,6 +210,12 @@ def main(is_training):
         f_params = f_get_params(f_opt_state)
         loss_val, grad_val = jax.value_and_grad(q_loss, argnums = 0)(q_params, f_params, rng)
         return loss_val, q_opt_update(i, grad_val, q_opt_state)
+    @jax.jit
+    def f_update(i, q_opt_state, f_opt_state, rng):
+        q_params = q_get_params(q_opt_state)
+        f_params = f_get_params(f_opt_state)
+        loss_val, grad_val = jax.value_and_grad(f_loss, argnums = 1)(q_params, f_params, rng)
+        return loss_val, f_opt_update(i, grad_val, f_opt_state)
     
     def save_img(q_params):
         bin_num = 100
@@ -211,17 +239,26 @@ def main(is_training):
         plt.savefig("simple.png")
 
     t0 = time.time()
-    e = 0
+    q_loss_val = f_loss_val = 0.0
+    q_cnt = f_cnt = 0
     while is_training:
-        rng_q, rng_f, rng = jax.random.split(rng, 3)
-        loss_val, q_opt_state = q_update(e, q_opt_state, f_opt_state, rng_q)
+        rng_q, rng = jax.random.split(rng)
+        q_loss_val, q_opt_state = q_update(q_cnt, q_opt_state, f_opt_state, rng_q)
+        q_cnt += 1
+        if (MODE == "generative") and (TRAIN_CRITIC == True):
+            for _ in range(T):
+                rng_f, rng = jax.random.split(rng)
+                f_loss_val, f_opt_state = f_update(f_cnt, q_opt_state, f_opt_state, rng_f)
+                f_cnt += 1
         t1 = time.time()
         if t1 - t0 > 1:
-            pickle.dump((q_get_params(q_opt_state), f_get_params(f_opt_state)), open(SAVE_PATH, "wb"))
-            save_img(q_get_params(q_opt_state))
-            print(e, loss_val, t1 - t0)
+            q_params = q_get_params(q_opt_state)
+            f_params = f_get_params(q_opt_state)
+            pickle.dump((q_params, f_params), open(SAVE_PATH, "wb"))
+            save_img(q_params)
+            print(q_cnt, "{:.2f}".format(t1 - t0),
+                    q_loss_val, -1.0 * f_loss_val)
             t0 = t1
-        e += 1
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

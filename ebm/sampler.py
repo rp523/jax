@@ -16,10 +16,9 @@ class Sampler:
     @staticmethod
     def __Maker(rng, batch_size, half_band):
         bin_num = max(batch_size * 2, 256)
-        band = 15.0
-        x = jnp.linspace(-band, band, bin_num)
+        x = jnp.linspace(-half_band, half_band, bin_num)
         x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
-        y = jnp.linspace(-band, band, bin_num)
+        y = jnp.linspace(-half_band, half_band, bin_num)
         y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
         data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
         assert(data.shape == (bin_num * bin_num, 2))
