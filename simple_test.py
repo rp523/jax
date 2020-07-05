@@ -60,14 +60,13 @@ def Net(scale):
     return net.get_jax_model()
 
 def tgt_fun(x):
-    return Sampler.prob(x)
+    return Sampler.prob(x) * 1E-2
 
 def main(is_training):
     LR = 1E-6
     BATCH_SIZE = 32
     X_DIM = 2
     SAVE_PATH = "simple.bin"
-    broaden_rate = 1
     half = 15
     band = half * 2
 
@@ -93,7 +92,7 @@ def main(is_training):
     @jax.jit
     def update(i, opt_state, x, y):
         params = get_params(opt_state)
-        loss_val, grad_val = jax.value_and_grad(loss)(params, x, y)
+        loss_val, grad_val = jax.value_and_grad(loss, argnums=0)(params, x, y)
         return loss_val, opt_update(i, grad_val, opt_state)
     
     def save_img(params):
@@ -105,8 +104,8 @@ def main(is_training):
         y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
         data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
         assert(data.shape == (bin_num * bin_num, 2))
-        minus_E = apply_fun(params, data / broaden_rate)["out"]
-        #minus_E = tgt_fun(data / broaden_rate)
+        minus_E = apply_fun(params, data)["out"]
+        #minus_E = tgt_fun(data)
         unnorm_log_q = minus_E
         unnorm_log_q = unnorm_log_q.reshape((bin_num, bin_num))
         X = jnp.linspace(-plot_band, plot_band, bin_num)
@@ -122,7 +121,7 @@ def main(is_training):
     while is_training:
         rng1, rng = jax.random.split(rng)
         x = jax.random.uniform(rng1, (BATCH_SIZE, X_DIM)) * band - half
-        y = tgt_fun(x / broaden_rate)
+        y = tgt_fun(x)
         loss_val, opt_state = update(e, opt_state, x, y)
         t1 = time.time()
         if t1 - t0 > 1:

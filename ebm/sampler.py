@@ -7,20 +7,20 @@ from tqdm import tqdm
 PROB_TYPE = "center_wave"
 
 class Sampler:
-    def __init__(self, rng, batch_size):
-        self.__maker = Sampler.__Maker(rng, batch_size)
+    def __init__(self, rng, batch_size, half_band):
+        self.__maker = Sampler.__Maker(rng, batch_size, half_band)
 
     def sample(self):
         return next(self.__maker)
 
     @staticmethod
-    def __Maker(rng, batch_size):
+    def __Maker(rng, batch_size, half_band):
         split_num = 8
         xy = jnp.zeros((batch_size, 2), dtype = jnp.float32)
         sampled_num = 0
         while True:
             rng_x, rng_p, rng = jax.random.split(rng, 3)
-            x = jax.random.uniform(rng_x, (split_num, 2)) - 0.5
+            x = (jax.random.uniform(rng_x, (split_num, 2)) * 2 - 1) * half_band
             p = jax.random.uniform(rng_p, (split_num,)  )
             is_valid = (p < Sampler.prob(x))
             assert(is_valid.shape == (split_num,))
@@ -79,7 +79,7 @@ class Sampler:
                 lined_x = -jnp.dot(rot_mat, x.T)[1]
                 weight = jax.nn.sigmoid(-(lined_x - delta) / sigma)
                 ret *= (weight)
-        return ret * 1E-3
+        return ret
 
 def exect_plot():
     bin_num = 256
