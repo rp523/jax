@@ -8,7 +8,7 @@ from jax.experimental import optimizers
 from model.maker.model_maker import net_maker
 from ebm.sampler import Sampler
 MODE = "discriminative"
-#MODE = "generative"
+MODE = "generative"
 TRAIN_CRITIC = False
 
 def SkipDense(unit_num):
@@ -85,6 +85,7 @@ def main(is_training):
     SAVE_PATH = "simple.bin"
     half = 15
     band = half * 2
+    x_record_bin = 100
 
     q_init_fun, q_apply_fun_raw = Q_Net(5)
     f_init_fun, f_apply_fun_raw = F_Net(5)
@@ -115,11 +116,10 @@ def main(is_training):
     q_opt_state = q_opt_init(q_init_params)
     f_opt_state = f_opt_init(f_init_params)
 
-    def aveLSD(q_params, f_params):
-        loss = 0.0
+    def aveLSD(q_params, f_params, x_batch):
         sum_lsd = 0.0
         sum_fnrm = 0.0
-        for x in sampler.sample():
+        for x in x_batch:
             lsd, fnrm = LSD(q_params, f_params, x, rng)
             sum_lsd += lsd
             sum_fnrm += fnrm
@@ -127,9 +127,9 @@ def main(is_training):
         ave_fnrm = sum_fnrm / BATCH_SIZE
         return ave_lsd, ave_fnrm
 
-    def q_loss(q_params, f_params, rng):
+    def q_loss(q_params, f_params, x_batch, rng):
         if MODE == "generative":
-            ave_lsd, ave_fnrm = aveLSD(q_params, f_params)
+            ave_lsd, ave_fnrm = aveLSD(q_params, f_params, x_batch)
             loss = ave_lsd
             loss += 1E-4 * net_maker.weight_decay(q_params)
             return loss
@@ -142,8 +142,8 @@ def main(is_training):
             assert(p.shape == y.shape)
             loss = smooth_l1(p - y).sum() / x.shape[0]
         return loss
-    def f_loss(q_params, f_params, rng):
-        ave_lsd, ave_fnrm = aveLSD(q_params, f_params)
+    def f_loss(q_params, f_params, x_batch, rng):
+        ave_lsd, ave_fnrm = aveLSD(q_params, f_params, x_batch)
         loss = ave_lsd
         loss -= 1E-4 * net_maker.weight_decay(q_params)
         loss -= LAMBDA * ave_fnrm
@@ -205,19 +205,19 @@ def main(is_training):
         return lsd, f_val
 
     @jax.jit
-    def q_update(i, q_opt_state, f_opt_state, rng):
+    def q_update(i, q_opt_state, f_opt_state, x_batch, rng):
         q_params = q_get_params(q_opt_state)
         f_params = f_get_params(f_opt_state)
-        loss_val, grad_val = jax.value_and_grad(q_loss, argnums = 0)(q_params, f_params, rng)
+        loss_val, grad_val = jax.value_and_grad(q_loss, argnums = 0)(q_params, f_params, x_batch, rng)
         return loss_val, q_opt_update(i, grad_val, q_opt_state)
     @jax.jit
-    def f_update(i, q_opt_state, f_opt_state, rng):
+    def f_update(i, q_opt_state, f_opt_state, x_batch, rng):
         q_params = q_get_params(q_opt_state)
         f_params = f_get_params(f_opt_state)
-        loss_val, grad_val = jax.value_and_grad(f_loss, argnums = 1)(q_params, f_params, rng)
+        loss_val, grad_val = jax.value_and_grad(f_loss, argnums = 1)(q_params, f_params, x_batch, rng)
         return loss_val, f_opt_update(i, grad_val, f_opt_state)
     
-    def save_img(q_params):
+    def save_img(q_params, x_record):
         bin_num = 100
         plot_band = half * 1
         x = jnp.linspace(-plot_band, plot_band, bin_num)
@@ -238,24 +238,44 @@ def main(is_training):
         plt.colorbar()
         plt.savefig("simple.png")
 
+        X = jnp.arange(x_record_bin)
+        Y = jnp.arange(x_record_bin)
+        X, Y = jnp.meshgrid(X, Y)
+        plt.clf()
+        plt.pcolor(X, Y, x_record)
+        plt.colorbar()
+        plt.savefig("x_record.png")
+
+    def update_x_record(x_record, x_batch):
+        incr_idx = jnp.clip((x_batch / band + 0.5) * x_record_bin, 0, x_record_bin).astype(jnp.int32)
+        for b in range(BATCH_SIZE):
+            x_record = jax.ops.index_add(x_record, jax.ops.index[incr_idx[b, 0], incr_idx[b, 1]], 1)
+        return x_record
+
+    x_record = jnp.zeros((x_record_bin, x_record_bin), dtype = jnp.uint64)
     t0 = time.time()
     q_loss_val = f_loss_val = 0.0
     q_cnt = f_cnt = 0
     while is_training:
         rng_q, rng = jax.random.split(rng)
-        q_loss_val, q_opt_state = q_update(q_cnt, q_opt_state, f_opt_state, rng_q)
+        x_batch = sampler.sample()
+        x_record = update_x_record(x_record, x_batch)
+                
+        q_loss_val, q_opt_state = q_update(q_cnt, q_opt_state, f_opt_state, x_batch, rng_q)
         q_cnt += 1
         if (MODE == "generative") and (TRAIN_CRITIC == True):
             for _ in range(T):
                 rng_f, rng = jax.random.split(rng)
-                f_loss_val, f_opt_state = f_update(f_cnt, q_opt_state, f_opt_state, rng_f)
+                x_batch = sampler.sample()
+                x_record = update_x_record(x_record, x_batch)
+                f_loss_val, f_opt_state = f_update(f_cnt, q_opt_state, f_opt_state, x_batch, rng_f)
                 f_cnt += 1
         t1 = time.time()
-        if t1 - t0 > 1:
+        if t1 - t0 > 2.0:
             q_params = q_get_params(q_opt_state)
             f_params = f_get_params(q_opt_state)
             pickle.dump((q_params, f_params), open(SAVE_PATH, "wb"))
-            save_img(q_params)
+            save_img(q_params, x_record)
             print(q_cnt, "{:.2f}".format(t1 - t0),
                     q_loss_val, -1.0 * f_loss_val)
             t0 = t1
