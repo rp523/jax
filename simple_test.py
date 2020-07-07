@@ -9,7 +9,7 @@ from model.maker.model_maker import net_maker
 from ebm.sampler import Sampler
 MODE = "discriminative"
 MODE = "generative"
-TRAIN_CRITIC = False
+TRAIN_CRITIC = True
 
 def SkipDense(unit_num):
     return serial(FanOut(2), parallel(Dense(unit_num), Identity), FanInSum)
@@ -77,7 +77,7 @@ def tgt_fun(x):
     return Sampler.prob(x) * 1E-2
 
 def main(is_training):
-    LR = 1E-4
+    LR = 1E-5
     LAMBDA = 0.5
     BATCH_SIZE = 8
     X_DIM = 2
@@ -120,9 +120,10 @@ def main(is_training):
         sum_lsd = 0.0
         sum_fnrm = 0.0
         for x in x_batch:
-            lsd, fnrm = LSD(q_params, f_params, x, rng)
+            lsd, f_val = LSD(q_params, f_params, x, rng)
+            assert(f_val.shape == (X_DIM,))
             sum_lsd += lsd
-            sum_fnrm += fnrm
+            sum_fnrm += (f_val ** 2).sum()
         ave_lsd  = sum_lsd  / BATCH_SIZE
         ave_fnrm = sum_fnrm / BATCH_SIZE
         return ave_lsd, ave_fnrm
@@ -145,7 +146,7 @@ def main(is_training):
     def f_loss(q_params, f_params, x_batch, rng):
         ave_lsd, ave_fnrm = aveLSD(q_params, f_params, x_batch)
         loss = ave_lsd
-        loss -= 1E-4 * net_maker.weight_decay(q_params)
+        #loss -= 1E-4 * net_maker.weight_decay(f_params)
         loss -= LAMBDA * ave_fnrm
         return -loss    # flip sign to maximize
     def exact_critic(   q_params,
@@ -201,7 +202,9 @@ def main(is_training):
         trace = Trace(rng, x, q_params, f_params)
         lsd = term1 + trace
         assert(lsd.size == 1)    # scalar
-        lsd = jnp.abs(lsd.sum())
+        lsd = (lsd.sum())
+        if not TRAIN_CRITIC:
+            lsd = jnp.abs(lsd)
         return lsd, f_val
 
     @jax.jit
