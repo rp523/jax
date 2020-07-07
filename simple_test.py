@@ -49,6 +49,7 @@ def ProdGaussian(scale):
         negative_energy = -((x - mu) ** 2).sum(axis = axis).reshape(-1, 1) / (2.0 * (sigma ** 2))
         if MODE == "generative":
             output_val = base_val + negative_energy
+            output_val = output_val.reshape(base_val.shape)
         elif MODE == "discriminative":
             output_val = base_val * jnp.exp(negative_energy)
         return output_val
