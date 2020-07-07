@@ -8,7 +8,7 @@ from jax.experimental import optimizers
 from model.maker.model_maker import net_maker
 from ebm.sampler import Sampler
 MODE = "discriminative"
-#MODE = "generative"
+MODE = "generative"
 TRAIN_CRITIC = False
 
 def SkipDense(unit_num):
@@ -77,7 +77,7 @@ def tgt_fun(x):
     return Sampler.prob(x) * 1E-2
 
 def main(is_training):
-    LR = 1E-5
+    LR = 1E-4
     LAMBDA = 0.5
     BATCH_SIZE = 8
     X_DIM = 2
@@ -201,7 +201,7 @@ def main(is_training):
         trace = Trace(rng, x, q_params, f_params)
         lsd = term1 + trace
         assert(lsd.size == 1)    # scalar
-        lsd = lsd.sum()
+        lsd = jnp.abs(lsd.sum())
         return lsd, f_val
 
     @jax.jit
@@ -237,7 +237,7 @@ def main(is_training):
         plt.pcolor(X, Y, unnorm_log_q)
         plt.colorbar()
         plt.savefig("simple.png")
-
+        return
         X = jnp.arange(x_record_bin)
         Y = jnp.arange(x_record_bin)
         X, Y = jnp.meshgrid(X, Y)
@@ -259,7 +259,7 @@ def main(is_training):
     while is_training:
         rng_q, rng = jax.random.split(rng)
         x_batch = sampler.sample()
-        x_record = update_x_record(x_record, x_batch)
+        #x_record = update_x_record(x_record, x_batch)
                 
         q_loss_val, q_opt_state = q_update(q_cnt, q_opt_state, f_opt_state, x_batch, rng_q)
         q_cnt += 1
@@ -267,7 +267,7 @@ def main(is_training):
             for _ in range(T):
                 rng_f, rng = jax.random.split(rng)
                 x_batch = sampler.sample()
-                x_record = update_x_record(x_record, x_batch)
+                #x_record = update_x_record(x_record, x_batch)
                 f_loss_val, f_opt_state = f_update(f_cnt, q_opt_state, f_opt_state, x_batch, rng_f)
                 f_cnt += 1
         t1 = time.time()
