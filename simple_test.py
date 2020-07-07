@@ -8,7 +8,7 @@ from jax.experimental import optimizers
 from model.maker.model_maker import net_maker
 from ebm.sampler import Sampler
 MODE = "discriminative"
-MODE = "generative"
+#MODE = "generative"
 TRAIN_CRITIC = False
 
 def SkipDense(unit_num):
