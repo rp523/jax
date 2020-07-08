@@ -89,8 +89,8 @@ def main(is_training):
     band = half * 2
     x_record_bin = 100
 
-    q_init_fun, q_apply_fun_raw = Q_Net(5)
-    f_init_fun, f_apply_fun_raw = F_Net(5)
+    q_init_fun, q_apply_fun_raw = Q_Net(half)
+    f_init_fun, f_apply_fun_raw = F_Net(half)
     def q_apply_fun(q_params, x):
         ret = q_apply_fun_raw(q_params, x)["out"]
         if (ret.size == 1):
