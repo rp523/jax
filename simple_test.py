@@ -86,6 +86,7 @@ def main(is_training):
     X_DIM = 2
     T = 100
     SAVE_PATH = "simple.bin"
+    SAVE_X_DIST = False
     half = 1.0
     band = half * 2
     x_record_bin = 100
@@ -163,7 +164,7 @@ def main(is_training):
         def log_p(x):
             assert(x.ndim == 1)
             x = x.reshape((1, x.size))  # reshape of 1-batch
-            p = Sampler.prob(x)
+            p = sampler.prob(x)
             if p.size == 1:
                 p = p.sum()
             return jnp.log(p)
@@ -243,13 +244,14 @@ def main(is_training):
         plt.colorbar()
         plt.savefig("simple.png")
         
-        X = jnp.arange(x_record_bin)
-        Y = jnp.arange(x_record_bin)
-        X, Y = jnp.meshgrid(X, Y)
-        plt.clf()
-        plt.pcolor(X, Y, x_record)
-        plt.colorbar()
-        plt.savefig("x_record.png")
+        if SAVE_X_DIST:
+            X = jnp.arange(x_record_bin)
+            Y = jnp.arange(x_record_bin)
+            X, Y = jnp.meshgrid(X, Y)
+            plt.clf()
+            plt.pcolor(X, Y, x_record)
+            plt.colorbar()
+            plt.savefig("x_record.png")
 
     def update_x_record(x_record, x_batch):
         incr_idx = jnp.clip((x_batch / band + 0.5) * x_record_bin, 0, x_record_bin).astype(jnp.int32)
@@ -267,7 +269,8 @@ def main(is_training):
             x_batch = sampler.sample()
         elif (MODE == "discriminative"):
             x_batch = jax.random.uniform(rng, (BATCH_SIZE, X_DIM)) * band - half
-        x_record = update_x_record(x_record, x_batch)
+        if SAVE_X_DIST:
+            x_record = update_x_record(x_record, x_batch)
                 
         q_loss_val, q_opt_state = q_update(q_cnt, q_opt_state, f_opt_state, x_batch, rng_q)
         q_cnt += 1
@@ -275,7 +278,8 @@ def main(is_training):
             for _ in range(T):
                 rng_f, rng = jax.random.split(rng)
                 x_batch = sampler.sample()
-                x_record = update_x_record(x_record, x_batch)
+                if SAVE_X_DIST:
+                    x_record = update_x_record(x_record, x_batch)
                 f_loss_val, f_opt_state = f_update(f_cnt, q_opt_state, f_opt_state, x_batch, rng_f)
                 f_cnt += 1
         t1 = time.time()
