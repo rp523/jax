@@ -41,9 +41,8 @@ def ProdGaussian(scale):
         mu, sigma = params
         base_val, x = input_tuple
         assert(x.ndim <= 2)
-        if x.ndim > 1:
+        if x.ndim > 1:  # batch
             axis = tuple(jnp.arange(1, x.ndim))
-            assert(base_val.shape[1] == 1)
         else:
             axis = None
         negative_energy = -((x - mu) ** 2).sum(axis = axis).reshape(-1, 1) / (2.0 * (sigma ** 2))
@@ -120,23 +119,16 @@ def main(is_training):
     q_opt_state = q_opt_init(q_init_params)
     f_opt_state = f_opt_init(f_init_params)
 
-    def aveLSD(q_params, f_params, x_batch):
-        sum_lsd = 0.0
-        sum_fnrm = 0.0
-        for x in x_batch:
-            lsd, f_val = LSD(q_params, f_params, x, rng)
-            assert(f_val.shape == (X_DIM,))
-            sum_lsd += lsd
-            sum_fnrm += (f_val ** 2).sum()
-        ave_lsd  = sum_lsd  / BATCH_SIZE
-        ave_fnrm = sum_fnrm / BATCH_SIZE
-        return ave_lsd, ave_fnrm
-
     def q_loss(q_params, f_params, x_batch, rng):
         if MODE == "generative":
-            ave_lsd, ave_fnrm = aveLSD(q_params, f_params, x_batch)
+            sum_lsd = 0.0
+            for x in x_batch:
+                x = x.reshape(tuple([1] + list(x.shape))) # make 1-batch shape
+                lsd, f_val = LSD(q_params, f_params, x, rng)
+                sum_lsd += lsd
+            ave_lsd = sum_lsd / BATCH_SIZE
             loss = ave_lsd
-            loss += 1E-4 * net_maker.weight_decay(q_params)
+            loss += 1E-5 * net_maker.weight_decay(q_params)
             return loss
         elif MODE == "discriminative":
             p = q_apply_fun(q_params, x_batch)
@@ -146,44 +138,59 @@ def main(is_training):
             assert(p.shape == y.shape)
             loss = smooth_l1(p - y).sum() / BATCH_SIZE
         return loss
+    
     def f_loss(q_params, f_params, x_batch, rng):
-        ave_lsd, ave_fnrm = aveLSD(q_params, f_params, x_batch)
+        sum_lsd = 0.0
+        for x in x_batch:
+            x = x.reshape(tuple([1] + list(x.shape))) # make 1-batch shape
+            lsd, f_val = LSD(q_params, f_params, x, rng)
+            assert(f_val.size == X_DIM)
+            sum_lsd += lsd
+            sum_f_norm += (f_val ** 2).sum()
+            #f_val_ideal = exact_critic(q_params, f_params, x)
+
+        ave_lsd = sum_lsd / BATCH_SIZE
         loss = ave_lsd
-        #loss -= 1E-4 * net_maker.weight_decay(f_params)
-        loss -= LAMBDA * ave_fnrm
+        ave_f_norm = sum_f_norm / BATCH_SIZE
+        loss -= LAMBDA * ave_f_norm
+        #loss -= 1E-5 * net_maker.weight_decay(f_params)
+        
         return -loss    # flip sign to maximize
+
     def exact_critic(   q_params,
                         f_params,
                         x,  # NO batch
                         ):
-        assert(x.ndim == 1)
+        assert(x.shape == (1, X_DIM))
         grad_x_log_q_fun = jax.grad(q_apply_fun, argnums = 1)
         grad_x_log_q_val = grad_x_log_q_fun(q_params, x)
-        assert(grad_x_log_q_val.shape == (x.size,))
+        assert(grad_x_log_q_val.size == X_DIM)
+        grad_x_log_q_val = grad_x_log_q_val.reshape((X_DIM,))
 
         def log_p(x):
-            assert(x.ndim == 1)
-            x = x.reshape((1, x.size))  # reshape of 1-batch
+            assert(x.shape == (1, X_DIM))
             p = sampler.prob(x)
             if p.size == 1:
                 p = p.sum()
             return jnp.log(p)
         grad_x_log_p_fun = jax.grad(log_p)
         grad_x_log_p_val = grad_x_log_p_fun(x)
+        assert(grad_x_log_p_val.size == X_DIM)
+        grad_x_log_p_val = grad_x_log_p_val.reshape((X_DIM,))
         
         return (grad_x_log_q_val - grad_x_log_p_val) / (2 * LAMBDA)
     def LSD(    q_params,
                 f_params,
                 x,  # NO batch
                 rng):
-        assert(x.ndim == 1)
+        assert(x.shape == (1, X_DIM))
         grad_x_log_q_fun = jax.grad(q_apply_fun, argnums = 1)
         grad_x_log_q_val = grad_x_log_q_fun(q_params, x)
-        assert(grad_x_log_q_val.shape == (x.size,))
+        assert(grad_x_log_q_val.shape == (1, X_DIM))
         f_val = f_apply_fun(f_params, x, q_params)
-        assert(f_val.shape == (x.size,))
-        term1 = jnp.dot(grad_x_log_q_val, f_val)    # shape (n,) and shape (n, )
-        assert(term1.size == 1) # scalar
+        assert(f_val.size == X_DIM)
+        f_val = f_val.reshape((1, X_DIM))
+        term1 = (grad_x_log_q_val * f_val).sum()
         
         def EfficientTrace(rng, x, q_params, f_params):
             grad_x_f_fun = jax.jacfwd(f_apply_fun, argnums = 1)
@@ -199,8 +206,8 @@ def main(is_training):
         def Trace(rng, x, q_params, f_params):
             grad_x_f_fun = jax.jacfwd(f_apply_fun, argnums = 1)
             grad_x_f_val = grad_x_f_fun(f_params, x, q_params)
-            assert(grad_x_f_val.shape == (x.size, x.size))
-            return (grad_x_f_val * jnp.eye(x.size)).sum()
+            assert(grad_x_f_val.size == (X_DIM * X_DIM))
+            return (grad_x_f_val.reshape((X_DIM, X_DIM)) * jnp.eye(x.size)).sum()
 
         trace = Trace(rng, x, q_params, f_params)
         lsd = term1 + trace
@@ -258,7 +265,7 @@ def main(is_training):
         for b in range(BATCH_SIZE):
             x_record = jax.ops.index_add(x_record, jax.ops.index[incr_idx[b, 0], incr_idx[b, 1]], 1)
         return x_record
-
+    
     x_record = jnp.zeros((x_record_bin, x_record_bin), dtype = jnp.uint32)
     t0 = time.time()
     q_loss_val = f_loss_val = 0.0
