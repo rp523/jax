@@ -76,7 +76,7 @@ def F_Net(scale):
     return net.get_jax_model()
 
 def tgt_fun(sampler, x ):
-    return sampler.prob(x) * 1E-2
+    return sampler.prob(x)
 
 def main(is_training):
     LR = 1E-4
@@ -256,7 +256,7 @@ def main(is_training):
             x_record = jax.ops.index_add(x_record, jax.ops.index[incr_idx[b, 0], incr_idx[b, 1]], 1)
         return x_record
 
-    x_record = jnp.zeros((x_record_bin, x_record_bin), dtype = jnp.uint64)
+    x_record = jnp.zeros((x_record_bin, x_record_bin), dtype = jnp.uint32)
     t0 = time.time()
     q_loss_val = f_loss_val = 0.0
     q_cnt = f_cnt = 0
