@@ -137,13 +137,12 @@ def main(is_training):
             loss += 1E-4 * net_maker.weight_decay(q_params)
             return loss
         elif MODE == "discriminative":
-            x = jax.random.uniform(rng, (BATCH_SIZE, X_DIM)) * band - half
-            p = q_apply_fun(q_params, x)
-            y = tgt_fun(sampler, x).reshape((-1, 1))
+            p = q_apply_fun(q_params, x_batch)
+            y = tgt_fun(sampler, x_batch).reshape((-1, 1))
             def smooth_l1(x):
                 return (0.5 * x ** 2) * (jnp.abs(x) < 1) + (jnp.abs(x) - 0.5) * (jnp.abs(x) >= 1)
             assert(p.shape == y.shape)
-            loss = smooth_l1(p - y).sum() / x.shape[0]
+            loss = smooth_l1(p - y).sum() / BATCH_SIZE
         return loss
     def f_loss(q_params, f_params, x_batch, rng):
         ave_lsd, ave_fnrm = aveLSD(q_params, f_params, x_batch)
@@ -263,7 +262,10 @@ def main(is_training):
     q_cnt = f_cnt = 0
     while is_training:
         rng_q, rng = jax.random.split(rng)
-        x_batch = sampler.sample()
+        if (MODE == "generative"):
+            x_batch = sampler.sample()
+        elif (MODE == "discriminative"):
+            x_batch = jax.random.uniform(rng, (BATCH_SIZE, X_DIM)) * band - half
         x_record = update_x_record(x_record, x_batch)
                 
         q_loss_val, q_opt_state = q_update(q_cnt, q_opt_state, f_opt_state, x_batch, rng_q)
