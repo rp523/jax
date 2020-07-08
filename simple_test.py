@@ -8,8 +8,8 @@ from jax.experimental import optimizers
 from model.maker.model_maker import net_maker
 from ebm.sampler import Sampler
 MODE = "discriminative"
-MODE = "generative"
-TRAIN_CRITIC = True
+#MODE = "generative"
+TRAIN_CRITIC = False
 
 def SkipDense(unit_num):
     return serial(FanOut(2), parallel(Dense(unit_num), Identity), FanInSum)
@@ -49,6 +49,7 @@ def ProdGaussian(scale):
         negative_energy = -((x - mu) ** 2).sum(axis = axis).reshape(-1, 1) / (2.0 * (sigma ** 2))
         if MODE == "generative":
             output_val = base_val + negative_energy
+            output_val = output_val.reshape(base_val.shape)
         elif MODE == "discriminative":
             output_val = base_val * jnp.exp(negative_energy)
         return output_val
@@ -70,25 +71,27 @@ def F_Net(scale):
     net.add_layer(serial(Dense(unit_num), Swish()))
     for _ in range(10):
         net.add_layer(serial(SkipDense(unit_num), Swish()))
-    net.add_layer(serial(Dense(2)), name = "out")
+    net.add_layer(serial(Dense(2)), name = "raw")
+    net.add_layer(ProdGaussian(scale), name = "out", input_name = ("raw", None))
     return net.get_jax_model()
 
-def tgt_fun(x):
-    return Sampler.prob(x) * 1E-2
+def tgt_fun(sampler, x ):
+    return sampler.prob(x)
 
 def main(is_training):
-    LR = 1E-5
+    RANDOM_SEED = 1
+    LR = 1E-4
     LAMBDA = 0.5
     BATCH_SIZE = 8
     X_DIM = 2
     T = 100
     SAVE_PATH = "simple.bin"
-    half = 15
+    half = 1.0
     band = half * 2
     x_record_bin = 100
 
-    q_init_fun, q_apply_fun_raw = Q_Net(5)
-    f_init_fun, f_apply_fun_raw = F_Net(5)
+    q_init_fun, q_apply_fun_raw = Q_Net(half)
+    f_init_fun, f_apply_fun_raw = F_Net(half)
     def q_apply_fun(q_params, x):
         ret = q_apply_fun_raw(q_params, x)["out"]
         if (ret.size == 1):
@@ -103,7 +106,7 @@ def main(is_training):
     q_opt_init, q_opt_update, q_get_params = optimizers.adam(LR, b1=0.5, b2=0.9)
     f_opt_init, f_opt_update, f_get_params = optimizers.adam(LR, b1=0.5, b2=0.9)
     
-    rng = jax.random.PRNGKey(0)
+    rng = jax.random.PRNGKey(RANDOM_SEED)
     rng_s, rng = jax.random.split(rng)
     sampler = Sampler(rng_s, BATCH_SIZE, half)
     if os.path.exists(SAVE_PATH):
@@ -135,13 +138,12 @@ def main(is_training):
             loss += 1E-4 * net_maker.weight_decay(q_params)
             return loss
         elif MODE == "discriminative":
-            x = jax.random.uniform(rng, (BATCH_SIZE, X_DIM)) * band - half
-            p = q_apply_fun(q_params, x)
-            y = tgt_fun(x).reshape((-1, 1))
+            p = q_apply_fun(q_params, x_batch)
+            y = tgt_fun(sampler, x_batch).reshape((-1, 1))
             def smooth_l1(x):
                 return (0.5 * x ** 2) * (jnp.abs(x) < 1) + (jnp.abs(x) - 0.5) * (jnp.abs(x) >= 1)
             assert(p.shape == y.shape)
-            loss = smooth_l1(p - y).sum() / x.shape[0]
+            loss = smooth_l1(p - y).sum() / BATCH_SIZE
         return loss
     def f_loss(q_params, f_params, x_batch, rng):
         ave_lsd, ave_fnrm = aveLSD(q_params, f_params, x_batch)
@@ -240,7 +242,7 @@ def main(is_training):
         plt.pcolor(X, Y, unnorm_log_q)
         plt.colorbar()
         plt.savefig("simple.png")
-        return
+        
         X = jnp.arange(x_record_bin)
         Y = jnp.arange(x_record_bin)
         X, Y = jnp.meshgrid(X, Y)
@@ -255,14 +257,17 @@ def main(is_training):
             x_record = jax.ops.index_add(x_record, jax.ops.index[incr_idx[b, 0], incr_idx[b, 1]], 1)
         return x_record
 
-    x_record = jnp.zeros((x_record_bin, x_record_bin), dtype = jnp.uint64)
+    x_record = jnp.zeros((x_record_bin, x_record_bin), dtype = jnp.uint32)
     t0 = time.time()
     q_loss_val = f_loss_val = 0.0
     q_cnt = f_cnt = 0
     while is_training:
         rng_q, rng = jax.random.split(rng)
-        x_batch = sampler.sample()
-        #x_record = update_x_record(x_record, x_batch)
+        if (MODE == "generative"):
+            x_batch = sampler.sample()
+        elif (MODE == "discriminative"):
+            x_batch = jax.random.uniform(rng, (BATCH_SIZE, X_DIM)) * band - half
+        x_record = update_x_record(x_record, x_batch)
                 
         q_loss_val, q_opt_state = q_update(q_cnt, q_opt_state, f_opt_state, x_batch, rng_q)
         q_cnt += 1
@@ -270,7 +275,7 @@ def main(is_training):
             for _ in range(T):
                 rng_f, rng = jax.random.split(rng)
                 x_batch = sampler.sample()
-                #x_record = update_x_record(x_record, x_batch)
+                x_record = update_x_record(x_record, x_batch)
                 f_loss_val, f_opt_state = f_update(f_cnt, q_opt_state, f_opt_state, x_batch, rng_f)
                 f_cnt += 1
         t1 = time.time()

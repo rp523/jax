@@ -8,13 +8,9 @@ PROB_TYPE = "center_wave"
 
 class Sampler:
     def __init__(self, rng, batch_size, half_band):
-        self.__maker = Sampler.__Maker(rng, batch_size, half_band)
+        self.__maker = self.__Maker(rng, batch_size, half_band)
+        self.__half_band = half_band
 
-    def sample(self):
-        return next(self.__maker)
-
-    @staticmethod
-    def __Maker(rng, batch_size, half_band):
         bin_num = max(batch_size * 2, 256)
         x = jnp.linspace(-half_band, half_band, bin_num)
         x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
@@ -22,8 +18,13 @@ class Sampler:
         y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
         data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
         assert(data.shape == (bin_num * bin_num, 2))
-        z = Sampler.prob(data)
-        max_val = z.max()
+        unnorm_map = self.__unnorm_prob(data)
+        self.__unnorm_max_val = unnorm_map.max()
+        self.__norm = unnorm_map.sum() * ((2 * half_band / bin_num) ** 2)
+    def sample(self):
+        return next(self.__maker)
+
+    def __Maker(self, rng, batch_size, half_band):
 
         split_num = 8
         xy = jnp.zeros((batch_size, 2), dtype = jnp.float32)
@@ -31,8 +32,8 @@ class Sampler:
         while True:
             rng_x, rng_p, rng = jax.random.split(rng, 3)
             x = (jax.random.uniform(rng_x, (split_num, 2)) * 2 - 1) * half_band
-            p = jax.random.uniform(rng_p, (split_num,)) * max_val
-            is_valid = (p < Sampler.prob(x))
+            p = jax.random.uniform(rng_p, (split_num,)) * self.__unnorm_max_val
+            is_valid = (p < self.__unnorm_prob(x))
             assert(is_valid.shape == (split_num,))
             valid_num = is_valid.sum()
             if valid_num > 0:
@@ -45,14 +46,18 @@ class Sampler:
                 if sampled_num >= batch_size:
                     yield xy
                     sampled_num = 0
+    
+    # normalized probability density
+    def prob(self, x):
+        return self.__unnorm_prob(x) / self.__norm
 
-    @staticmethod
-    def prob(x):
+    # unnormalized probability density
+    def __unnorm_prob(self, x):
         assert(x.shape[-1] == 2)
 
         if PROB_TYPE == "center_wave":
-            delta_r = 7.5
-            sigma = 3
+            delta_r = 0.5 * self.__half_band
+            sigma = 0.2 * self.__half_band
 
             cx = 0.0
             cy = 0.0
@@ -62,7 +67,6 @@ class Sampler:
             r = (rx ** 2 + ry ** 2) ** 0.5
 
             ret = jnp.exp(- ((r - delta_r) ** 2) / (2 * sigma ** 2))
-            ret = ret / 0.389008
         elif PROB_TYPE == "block":
             ret = 0.0
             split_num = 5
@@ -93,20 +97,22 @@ class Sampler:
         return ret
 
 def exect_plot():
-    bin_num = 256
-    band = 15.0
-    x = jnp.linspace(-band, band, bin_num)
+    bin_num = 50
+    half_band = 1.0
+    x = jnp.linspace(-half_band, half_band, bin_num)
     x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
-    y = jnp.linspace(-band, band, bin_num)
+    y = jnp.linspace(-half_band, half_band, bin_num)
     y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
     data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
     assert(data.shape == (bin_num * bin_num, 2))
-    z = Sampler.prob(data)
+    rng = jax.random.PRNGKey(0)
+    sampler = Sampler(rng, bin_num ** 2, half_band)
+    z = sampler.prob(data)
     print(z.mean())
     assert(z.shape == (bin_num * bin_num,))
     z = z.reshape((bin_num, bin_num))
-    X = jnp.linspace(-band, band, bin_num)
-    Y = jnp.linspace(-band, band, bin_num)
+    X = jnp.linspace(-half_band, half_band, bin_num)
+    Y = jnp.linspace(-half_band, half_band, bin_num)
     X, Y = jnp.meshgrid(X, Y)
     plt.pcolor(X, Y, z)
     plt.colorbar()
@@ -117,7 +123,7 @@ def main():
     rng = jax.random.PRNGKey(0)
     SAMPLE_NUM = 100000
     BATCH_SIZE = 1000
-    half_band = 15
+    half_band = 1
     s = Sampler(rng, batch_size = BATCH_SIZE, half_band = half_band)
     x_vec = jnp.zeros(SAMPLE_NUM, dtype = jnp.float32)
     y_vec = jnp.zeros(SAMPLE_NUM, dtype = jnp.float32)
