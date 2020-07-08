@@ -99,8 +99,8 @@ class Sampler:
         return ret
 
 def exect_plot():
-    bin_num = 100
-    half_band = 15.0
+    bin_num = 50
+    half_band = 1.0
     x = jnp.linspace(-half_band, half_band, bin_num)
     x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
     y = jnp.linspace(-half_band, half_band, bin_num)
@@ -125,7 +125,7 @@ def main():
     rng = jax.random.PRNGKey(0)
     SAMPLE_NUM = 100000
     BATCH_SIZE = 1000
-    half_band = 15
+    half_band = 1
     s = Sampler(rng, batch_size = BATCH_SIZE, half_band = half_band)
     x_vec = jnp.zeros(SAMPLE_NUM, dtype = jnp.float32)
     y_vec = jnp.zeros(SAMPLE_NUM, dtype = jnp.float32)
