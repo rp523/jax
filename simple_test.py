@@ -76,16 +76,17 @@ def F_Net(scale):
     return net.get_jax_model()
 
 def tgt_fun(sampler, x ):
-    return sampler.prob(x) * 100
+    return sampler.prob(x)
 
 def main(is_training):
+    RANDOM_SEED = 1
     LR = 1E-4
     LAMBDA = 0.5
     BATCH_SIZE = 8
     X_DIM = 2
     T = 100
     SAVE_PATH = "simple.bin"
-    half = 10
+    half = 1.0
     band = half * 2
     x_record_bin = 100
 
@@ -105,7 +106,7 @@ def main(is_training):
     q_opt_init, q_opt_update, q_get_params = optimizers.adam(LR, b1=0.5, b2=0.9)
     f_opt_init, f_opt_update, f_get_params = optimizers.adam(LR, b1=0.5, b2=0.9)
     
-    rng = jax.random.PRNGKey(0)
+    rng = jax.random.PRNGKey(RANDOM_SEED)
     rng_s, rng = jax.random.split(rng)
     sampler = Sampler(rng_s, BATCH_SIZE, half)
     if os.path.exists(SAVE_PATH):
