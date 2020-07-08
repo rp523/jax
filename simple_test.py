@@ -76,7 +76,7 @@ def F_Net(scale):
     return net.get_jax_model()
 
 def tgt_fun(sampler, x ):
-    return sampler.prob(x)
+    return sampler.prob(x) * 100
 
 def main(is_training):
     LR = 1E-4
@@ -85,7 +85,7 @@ def main(is_training):
     X_DIM = 2
     T = 100
     SAVE_PATH = "simple.bin"
-    half = 15
+    half = 10
     band = half * 2
     x_record_bin = 100
 

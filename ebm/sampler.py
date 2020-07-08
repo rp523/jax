@@ -20,8 +20,7 @@ class Sampler:
         assert(data.shape == (bin_num * bin_num, 2))
         unnorm_map = self.__unnorm_prob(data)
         self.__unnorm_max_val = unnorm_map.max()
-        self.__norm = unnorm_map.mean()
-
+        self.__norm = unnorm_map.sum() * ((2 * half_band / bin_num) ** 2)
     def sample(self):
         return next(self.__maker)
 
@@ -68,7 +67,6 @@ class Sampler:
             r = (rx ** 2 + ry ** 2) ** 0.5
 
             ret = jnp.exp(- ((r - delta_r) ** 2) / (2 * sigma ** 2))
-            ret = ret / 0.389008
         elif PROB_TYPE == "block":
             ret = 0.0
             split_num = 5
