@@ -8,8 +8,8 @@ from jax.experimental import optimizers
 from model.maker.model_maker import net_maker
 from ebm.sampler import Sampler
 MODE = "discriminative"
-MODE = "generative"
-TRAIN_CRITIC = True
+#MODE = "generative"
+TRAIN_CRITIC = False
 
 def SkipDense(unit_num):
     return serial(FanOut(2), parallel(Dense(unit_num), Identity), FanInSum)
@@ -75,11 +75,11 @@ def F_Net(scale):
     net.add_layer(ProdGaussian(scale), name = "out", input_name = ("raw", None))
     return net.get_jax_model()
 
-def tgt_fun(x):
-    return Sampler.prob(x) * 1E-2
+def tgt_fun(sampler, x ):
+    return sampler.prob(x) * 1E-2
 
 def main(is_training):
-    LR = 1E-5
+    LR = 1E-4
     LAMBDA = 0.5
     BATCH_SIZE = 8
     X_DIM = 2
@@ -139,7 +139,7 @@ def main(is_training):
         elif MODE == "discriminative":
             x = jax.random.uniform(rng, (BATCH_SIZE, X_DIM)) * band - half
             p = q_apply_fun(q_params, x)
-            y = tgt_fun(x).reshape((-1, 1))
+            y = tgt_fun(sampler, x).reshape((-1, 1))
             def smooth_l1(x):
                 return (0.5 * x ** 2) * (jnp.abs(x) < 1) + (jnp.abs(x) - 0.5) * (jnp.abs(x) >= 1)
             assert(p.shape == y.shape)
