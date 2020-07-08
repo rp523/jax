@@ -8,7 +8,7 @@ from jax.experimental import optimizers
 from model.maker.model_maker import net_maker
 from ebm.sampler import Sampler
 MODE = "discriminative"
-#MODE = "generative"
+MODE = "generative"
 TRAIN_CRITIC = False
 
 def SkipDense(unit_num):
@@ -240,7 +240,7 @@ def main(is_training):
         Y = jnp.linspace(-plot_band, plot_band, bin_num)
         X, Y = jnp.meshgrid(X, Y)
         plt.clf()
-        plt.pcolor(X, Y, unnorm_log_q)
+        plt.pcolor(X, Y, jnp.exp(unnorm_log_q))
         plt.colorbar()
         plt.savefig("simple.png")
         
