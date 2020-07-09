@@ -55,22 +55,22 @@ def ProdGaussian(scale):
     return init_fun, apply_fun
 
 def Q_Net(scale):
-    unit_num = 1000
+    unit_num = 300
     net = net_maker()
-    net.add_layer(serial(Dense(unit_num), Swish()))
-    for _ in range(10):
-        net.add_layer(serial(SkipDense(unit_num), Swish()))
-    net.add_layer(serial(Dense(1)), name = "raw")
+    for _ in range(2):
+        net.add_layer(Dense(unit_num))
+        net.add_layer(Swish())
+    net.add_layer(Dense(1), name = "raw")
     net.add_layer(ProdGaussian(scale), name = "out", input_name = ("raw", None))
     return net.get_jax_model()
 
 def F_Net(scale):
-    unit_num = 1000
+    unit_num = 300
     net = net_maker()
-    net.add_layer(serial(Dense(unit_num), Swish()))
-    for _ in range(10):
-        net.add_layer(serial(SkipDense(unit_num), Swish()))
-    net.add_layer(serial(Dense(2)), name = "raw")
+    for _ in range(2):
+        net.add_layer(Dense(unit_num))
+        net.add_layer(Swish())
+    net.add_layer(Dense(1), name = "raw")
     net.add_layer(ProdGaussian(scale), name = "out", input_name = ("raw", None))
     return net.get_jax_model()
 
@@ -79,7 +79,7 @@ def tgt_fun(sampler, x ):
 
 def main(is_training):
     RANDOM_SEED = 1
-    LR = 1E-4
+    LR = 1E-3
     LAMBDA = 0.5
     BATCH_SIZE = 8
     X_DIM = 2
