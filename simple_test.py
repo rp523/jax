@@ -9,7 +9,7 @@ from model.maker.model_maker import net_maker
 from ebm.sampler import Sampler
 MODE = "discriminative"
 MODE = "generative"
-TRAIN_CRITIC = False
+TRAIN_CRITIC = True
 
 def SkipDense(unit_num):
     return serial(FanOut(2), parallel(Dense(unit_num), Identity), FanInSum)
@@ -70,7 +70,7 @@ def F_Net(scale):
     for _ in range(2):
         net.add_layer(Dense(unit_num))
         net.add_layer(Swish())
-    net.add_layer(Dense(1), name = "raw")
+    net.add_layer(Dense(2), name = "raw")
     net.add_layer(ProdGaussian(scale), name = "out", input_name = ("raw", None))
     return net.get_jax_model()
 
@@ -80,10 +80,10 @@ def tgt_fun(sampler, x ):
 def main(is_training):
     RANDOM_SEED = 1
     LR = 1E-3
-    LAMBDA = 0.5
+    LAMBDA = 10
     BATCH_SIZE = 8
     X_DIM = 2
-    T = 100
+    C = 5
     SAVE_PATH = "simple.bin"
     SAVE_X_DIST = False
     half = 1.0
@@ -141,6 +141,7 @@ def main(is_training):
     
     def f_loss(q_params, f_params, x_batch, rng):
         sum_lsd = 0.0
+        sum_f_norm = 0.0
         for x in x_batch:
             x = x.reshape(tuple([1] + list(x.shape))) # make 1-batch shape
             lsd, f_val = LSD(q_params, f_params, x, rng)
@@ -282,7 +283,7 @@ def main(is_training):
         q_loss_val, q_opt_state = q_update(q_cnt, q_opt_state, f_opt_state, x_batch, rng_q)
         q_cnt += 1
         if (MODE == "generative") and (TRAIN_CRITIC == True):
-            for _ in range(T):
+            for _ in range(C):
                 rng_f, rng = jax.random.split(rng)
                 x_batch = sampler.sample()
                 if SAVE_X_DIST:
