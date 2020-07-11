@@ -7,9 +7,6 @@ from jax.experimental.stax import serial, parallel, Dense, Sigmoid, FanOut, FanI
 from jax.experimental import optimizers
 from model.maker.model_maker import net_maker
 from ebm.sampler import Sampler
-MODE = "discriminative"
-MODE = "generative"
-TRAIN_CRITIC = True
 
 def SkipDense(unit_num):
     return serial(FanOut(2), parallel(Dense(unit_num), Identity), FanInSum)
@@ -36,9 +33,10 @@ def ProdGaussian(scale):
             mu_shape = (mu_shape,)
         mu = mu_init(k_mu, mu_shape)
         sigma = sigma_init(k_sigma, (1,)) * scale
-        return output_shape, (mu, sigma)
+        return output_shape, (mu, jnp.log(sigma))
     def apply_fun(params, input_tuple, **kwargs):
-        mu, sigma = params
+        mu, log_sigma = params
+        sigma = jnp.exp(log_sigma)
         base_val, x = input_tuple
         assert(x.ndim <= 2)
         if x.ndim > 1:  # batch
@@ -46,11 +44,8 @@ def ProdGaussian(scale):
         else:
             axis = None
         negative_energy = -((x - mu) ** 2).sum(axis = axis).reshape(-1, 1) / (2.0 * (sigma ** 2))
-        if MODE == "generative":
-            output_val = base_val + negative_energy
-            output_val = output_val.reshape(base_val.shape)
-        elif MODE == "discriminative":
-            output_val = base_val * jnp.exp(negative_energy)
+        output_val = base_val + negative_energy
+        output_val = output_val.reshape(base_val.shape)
         return output_val
     return init_fun, apply_fun
 
@@ -70,8 +65,7 @@ def F_Net(scale):
     for _ in range(2):
         net.add_layer(Dense(unit_num))
         net.add_layer(Swish())
-    net.add_layer(Dense(2), name = "raw")
-    net.add_layer(ProdGaussian(scale), name = "out", input_name = ("raw", None))
+    net.add_layer(Dense(2), name = "out")
     return net.get_jax_model()
 
 def tgt_fun(sampler, x ):
@@ -79,7 +73,7 @@ def tgt_fun(sampler, x ):
 
 def main(is_training):
     RANDOM_SEED = 1
-    LR = 1E-3
+    LR = 1E-5
     LAMBDA = 10
     BATCH_SIZE = 8
     X_DIM = 2
@@ -97,11 +91,8 @@ def main(is_training):
         if (ret.size == 1):
             ret = ret.sum()
         return ret
-    def f_apply_fun(f_params, x, q_params):
-        if TRAIN_CRITIC:
-            ret = f_apply_fun_raw(f_params, x)["out"]
-        else:
-            ret = exact_critic(q_params, f_params, x)
+    def f_apply_fun(f_params, x):
+        ret = f_apply_fun_raw(f_params, x)["out"]
         return ret
     q_opt_init, q_opt_update, q_get_params = optimizers.adam(LR, b1=0.5, b2=0.9)
     f_opt_init, f_opt_update, f_get_params = optimizers.adam(LR, b1=0.5, b2=0.9)
@@ -120,25 +111,16 @@ def main(is_training):
     f_opt_state = f_opt_init(f_init_params)
 
     def q_loss(q_params, f_params, x_batch, rng):
-        if MODE == "generative":
-            sum_lsd = 0.0
-            for x in x_batch:
-                x = x.reshape(tuple([1] + list(x.shape))) # make 1-batch shape
-                lsd, f_val = LSD(q_params, f_params, x, rng)
-                sum_lsd += lsd
-            ave_lsd = sum_lsd / BATCH_SIZE
-            loss = ave_lsd
-            loss += 1E-5 * net_maker.weight_decay(q_params)
-            return loss
-        elif MODE == "discriminative":
-            p = q_apply_fun(q_params, x_batch)
-            y = tgt_fun(sampler, x_batch).reshape((-1, 1))
-            def smooth_l1(x):
-                return (0.5 * x ** 2) * (jnp.abs(x) < 1) + (jnp.abs(x) - 0.5) * (jnp.abs(x) >= 1)
-            assert(p.shape == y.shape)
-            loss = smooth_l1(p - y).sum() / BATCH_SIZE
+        sum_lsd = 0.0
+        for x in x_batch:
+            x = x.reshape(tuple([1] + list(x.shape))) # make 1-batch shape
+            lsd, f_val = LSD(q_params, f_params, x, rng)
+            sum_lsd += lsd
+        ave_lsd = sum_lsd / BATCH_SIZE
+        loss = ave_lsd
+        loss += 1E-5 * net_maker.weight_decay(q_params)
         return loss
-    
+
     def f_loss(q_params, f_params, x_batch, rng):
         sum_lsd = 0.0
         sum_f_norm = 0.0
@@ -148,7 +130,6 @@ def main(is_training):
             assert(f_val.size == X_DIM)
             sum_lsd += lsd
             sum_f_norm += (f_val ** 2).sum()
-            #f_val_ideal = exact_critic(q_params, f_params, x)
 
         ave_lsd = sum_lsd / BATCH_SIZE
         loss = ave_lsd
@@ -158,28 +139,6 @@ def main(is_training):
         
         return -loss    # flip sign to maximize
 
-    def exact_critic(   q_params,
-                        f_params,
-                        x,  # NO batch
-                        ):
-        assert(x.shape == (1, X_DIM))
-        grad_x_log_q_fun = jax.grad(q_apply_fun, argnums = 1)
-        grad_x_log_q_val = grad_x_log_q_fun(q_params, x)
-        assert(grad_x_log_q_val.size == X_DIM)
-        grad_x_log_q_val = grad_x_log_q_val.reshape((X_DIM,))
-
-        def log_p(x):
-            assert(x.shape == (1, X_DIM))
-            p = sampler.prob(x)
-            if p.size == 1:
-                p = p.sum()
-            return jnp.log(p)
-        grad_x_log_p_fun = jax.grad(log_p)
-        grad_x_log_p_val = grad_x_log_p_fun(x)
-        assert(grad_x_log_p_val.size == X_DIM)
-        grad_x_log_p_val = grad_x_log_p_val.reshape((X_DIM,))
-        
-        return (grad_x_log_q_val - grad_x_log_p_val) / (2 * LAMBDA)
     def LSD(    q_params,
                 f_params,
                 x,  # NO batch
@@ -188,7 +147,7 @@ def main(is_training):
         grad_x_log_q_fun = jax.grad(q_apply_fun, argnums = 1)
         grad_x_log_q_val = grad_x_log_q_fun(q_params, x)
         assert(grad_x_log_q_val.shape == (1, X_DIM))
-        f_val = f_apply_fun(f_params, x, q_params)
+        f_val = f_apply_fun(f_params, x)
         assert(f_val.size == X_DIM)
         f_val = f_val.reshape((1, X_DIM))
         term1 = (grad_x_log_q_val * f_val).sum()
@@ -206,7 +165,7 @@ def main(is_training):
         
         def Trace(rng, x, q_params, f_params):
             grad_x_f_fun = jax.jacfwd(f_apply_fun, argnums = 1)
-            grad_x_f_val = grad_x_f_fun(f_params, x, q_params)
+            grad_x_f_val = grad_x_f_fun(f_params, x)
             assert(grad_x_f_val.size == (X_DIM * X_DIM))
             return (grad_x_f_val.reshape((X_DIM, X_DIM)) * jnp.eye(x.size)).sum()
 
@@ -214,8 +173,7 @@ def main(is_training):
         lsd = term1 + trace
         assert(lsd.size == 1)    # scalar
         lsd = (lsd.sum())
-        if not TRAIN_CRITIC:
-            lsd = jnp.abs(lsd)
+        
         return lsd, f_val
 
     @jax.jit
@@ -273,23 +231,21 @@ def main(is_training):
     q_cnt = f_cnt = 0
     while is_training:
         rng_q, rng = jax.random.split(rng)
-        if (MODE == "generative"):
-            x_batch = sampler.sample()
-        elif (MODE == "discriminative"):
-            x_batch = jax.random.uniform(rng, (BATCH_SIZE, X_DIM)) * band - half
+        x_batch = sampler.sample()
         if SAVE_X_DIST:
             x_record = update_x_record(x_record, x_batch)
                 
         q_loss_val, q_opt_state = q_update(q_cnt, q_opt_state, f_opt_state, x_batch, rng_q)
         q_cnt += 1
-        if (MODE == "generative") and (TRAIN_CRITIC == True):
-            for _ in range(C):
-                rng_f, rng = jax.random.split(rng)
-                x_batch = sampler.sample()
-                if SAVE_X_DIST:
-                    x_record = update_x_record(x_record, x_batch)
-                f_loss_val, f_opt_state = f_update(f_cnt, q_opt_state, f_opt_state, x_batch, rng_f)
-                f_cnt += 1
+
+        for _ in range(C):
+            rng_f, rng = jax.random.split(rng)
+            x_batch = sampler.sample()
+            if SAVE_X_DIST:
+                x_record = update_x_record(x_record, x_batch)
+            f_loss_val, f_opt_state = f_update(f_cnt, q_opt_state, f_opt_state, x_batch, rng_f)
+            f_cnt += 1
+
         t1 = time.time()
         if t1 - t0 > 2.0:
             q_params = q_get_params(q_opt_state)
