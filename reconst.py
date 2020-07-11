@@ -63,7 +63,7 @@ def gaussian_net(base_net, scale):
 
 def save_map(   q_apply_fun, q_params,
                 f_apply_fun, f_params,
-                x_record,
+                x_record, sampler,
                 save_path):
     x = jnp.linspace(-HALF_BAND, HALF_BAND, bin_num)
     x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
@@ -87,10 +87,14 @@ def save_map(   q_apply_fun, q_params,
     plt.pcolor(X, Y, q)
     plt.colorbar()
 
-    if x_record is not None:
+    '''if x_record is not None:
         ax = fig.add_subplot(222)
         plt.pcolor(X, Y, x_record)
         plt.colorbar()
+    '''
+    ax = fig.add_subplot(222)
+    plt.pcolor(X, Y, sampler.prob(data).reshape((bin_num, bin_num)))
+    plt.colorbar()
 
     for d in range(X_DIM):
         ax = fig.add_subplot(223 + d)
@@ -203,7 +207,7 @@ def main():
             t0 = t1
             save_map(   q_apply_fun, q_get_params(q_opt_state),
                         f_apply_fun, f_get_params(f_opt_state),
-                        x_record,
+                        x_record, sampler,
                         "map.png")
 
 if __name__ == "__main__":
