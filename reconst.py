@@ -37,10 +37,9 @@ def SkipDense(unit_num):
 
 def mlp(out_ch):
     net = net_maker()
-    net.add_layer(Dense(300))
-    net.add_layer(Swish())
-    net.add_layer(SkipDense(300))
-    net.add_layer(Swish())
+    net.add_layer(serial(Dense(300), Swish()))
+    for _ in range(1):
+        net.add_layer(serial(SkipDense(300), Swish()))
     net.add_layer(Dense(out_ch), name = "out")
     return net.get_jax_model()
 
@@ -205,6 +204,7 @@ def main():
     t0 = time.time()
     t = c = 0
     q_loss_val = f_loss_val = 0.0
+    olds = f_get_params(f_opt_state)
     while True:
         x_batch = sampler.sample()
         x_record = update_x_record(x_record, x_batch)
@@ -214,7 +214,10 @@ def main():
 
         t1 = time.time()
         if t1 - t0 > 10.0:
-            print(t, "{:.2f}".format(t1 - t0), q_loss_val, -1 * f_loss_val)
+            news = f_get_params(f_opt_state)
+            print(t, "{:.2f}".format(t1 - t0), q_loss_val, -1 * f_loss_val,
+                    net_maker.param_l2_norm(olds, news))
+            olds = news
             t0 = t1
             save_map(   q_apply_fun, q_get_params(q_opt_state),
                         f_apply_fun, f_get_params(f_opt_state),
