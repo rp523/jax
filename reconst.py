@@ -37,9 +37,10 @@ def SkipDense(unit_num):
 
 def mlp(out_ch):
     net = net_maker()
-    for _ in range(2):
-        net.add_layer(Dense(300))
-        net.add_layer(Swish())
+    net.add_layer(Dense(300))
+    net.add_layer(Swish())
+    net.add_layer(SkipDense(300))
+    net.add_layer(Swish())
     net.add_layer(Dense(out_ch), name = "out")
     return net.get_jax_model()
 
