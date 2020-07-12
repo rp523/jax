@@ -1,4 +1,4 @@
-import os, time
+import os, time, pickle
 from matplotlib import pyplot as plt
 import jax
 from jax.experimental.stax import serial, Dense, elementwise, FanOut, FanInSum, parallel, Identity
@@ -11,7 +11,7 @@ SEED = 0
 BATCH_SIZE = 100
 X_DIM = 2
 HALF_BAND = 5.0
-LR = 1E-3
+LR = 1E-4
 B1 = 0.0
 B2 = 0.999
 LAMBDA = 10
@@ -38,7 +38,7 @@ def SkipDense(unit_num):
 def mlp(out_ch):
     net = net_maker()
     net.add_layer(serial(Dense(300), Swish()))
-    for _ in range(1):
+    for _ in range(3):
         net.add_layer(serial(SkipDense(300), Swish()))
     net.add_layer(Dense(out_ch), name = "out")
     return net.get_jax_model()
@@ -89,11 +89,14 @@ def save_map(   q_apply_fun, q_params,
     X, Y = jnp.meshgrid(X, Y)
 
     ax = fig.add_subplot(221)
-    plt.pcolor(X, Y, q)
+    if x_record is not None:
+        plt.pcolor(X, Y, x_record.reshape(bin_num, bin_num))
+    else:
+        plt.pcolor(X, Y, sampler.prob(data).reshape(bin_num, bin_num))
     plt.colorbar()
 
     ax = fig.add_subplot(222)
-    plt.pcolor(X, Y, sampler.prob(data).reshape(bin_num, bin_num))
+    plt.pcolor(X, Y, q)
     plt.colorbar()
 
     for d in range(X_DIM):
@@ -188,9 +191,14 @@ def main():
             c_cnt += 1
         return t_cnt, c_cnt, q_opt_state, f_opt_state, q_loss_val, f_loss_val, rngs[idx]
 
-    _, q_init_params = q_init_fun(rng_q, (BATCH_SIZE, X_DIM))
+    SAVE_PATH = r"params.bin"
+    if not os.path.exists(SAVE_PATH):
+        _, q_init_params = q_init_fun(rng_q, (BATCH_SIZE, X_DIM))
+        _, f_init_params = f_init_fun(rng_f, (BATCH_SIZE, X_DIM))
+    else:
+        (q_init_params, f_init_params) = pickle.load(open(SAVE_PATH, "rb"))
+        print("LODADED INIT WEIGHT")
     q_opt_state = q_opt_init(q_init_params)
-    _, f_init_params = f_init_fun(rng_f, (BATCH_SIZE, X_DIM))
     f_opt_state = f_opt_init(f_init_params)
     x_record = None#jnp.zeros((bin_num, bin_num), dtype = jnp.uint32)
     def update_x_record(x_record, x_batch):
@@ -223,6 +231,7 @@ def main():
                         f_apply_fun, f_get_params(f_opt_state),
                         x_record, sampler,
                         "map.png")
+            pickle.dump((q_get_params(q_opt_state), f_get_params(f_opt_state)), open(SAVE_PATH, "wb"))
 
 if __name__ == "__main__":
     main()
