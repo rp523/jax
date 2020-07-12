@@ -54,6 +54,18 @@ class net_maker():
             ret += (params ** 2).sum()
         return ret
 
+    @staticmethod    
+    def param_l2_norm(params1, params2):
+        ret = 0.0
+        if isinstance(params1, list) or isinstance(params1, tuple):
+            params1 = list(params1)
+            params2 = list(params2)
+            for param1, param2 in zip(params1, params2):
+                ret += net_maker.param_l2_norm(param1, param2)
+        else:
+            ret += ((params1 - params2) ** 2).sum()
+        return ret
+
     def get_jax_model(self):
         n_layers = len(self.__init_funs)
 

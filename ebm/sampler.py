@@ -5,8 +5,9 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from tqdm import tqdm
 PROB_TYPE = "center_wave"
-cenwav_param = [[0.4, 0.1],
-                [0.8, 0.1],
+cenwav_param = [[0.25, 0.05],
+                [0.50, 0.05],
+                [0.75, 0.05],
                 ]
 select = []
 for i in range(len(cenwav_param)):
