@@ -133,6 +133,11 @@ def main():
             return logq_batch.sum()
         sq_batch = jax.grad(logq_sum, argnums = 1)(q_params, x_batch) # ▽x(Log(q))
         return sq_batch
+    def calc_efficient_trace(f_params, x_batch, rng):
+        eps = jax.random.normal(rng, x_batch.shape)
+        fx, vjp_fun = jax.vjp(f_apply_fun, f_params, x_batch)
+        dp, dx = vjp_fun(eps)
+        return (dx * eps).sum(axis = -1), fx
     def calc_exact_trace(f_params, x_batch):
         trace_batch = jnp.zeros((BATCH_SIZE,))
         def f_apply_fun_dim(f_params, x_batch, idx):
@@ -141,44 +146,46 @@ def main():
             trace_comp = jax.grad(f_apply_fun_dim, argnums = 1)(f_params, x_batch, d)[:, d]
             trace_batch += trace_comp
         return trace_batch
-    def calc_loss_metrics(q_params, f_params, x_batch):
+    def calc_loss_metrics(q_params, f_params, x_batch, rng):
+        tr_dfdx_batch, fx_batch = calc_efficient_trace(f_params, x_batch, rng)
         sq_batch = calc_sq_batch(q_params, x_batch)
-        fx_batch = f_apply_fun(f_params, x_batch)
         sq_fx_batch = (sq_batch * fx_batch).sum(axis = -1)
-        tr_dfdx_batch = calc_exact_trace(f_params, x_batch)
         lsd = (sq_fx_batch + tr_dfdx_batch).mean()
         f_norm = (fx_batch * fx_batch).sum(axis = -1).mean()
         return lsd, f_norm
-    def q_loss(q_params, f_params, x_batch):
-        lsd, _ =  calc_loss_metrics(q_params, f_params, x_batch)
+    def q_loss(q_params, f_params, x_batch, rng):
+        lsd, _ =  calc_loss_metrics(q_params, f_params, x_batch, rng)
         return lsd
-    def f_loss(q_params, f_params, x_batch):
-        lsd, f_norm =  calc_loss_metrics(q_params, f_params, x_batch)
+    def f_loss(q_params, f_params, x_batch, rng):
+        lsd, f_norm =  calc_loss_metrics(q_params, f_params, x_batch, rng)
         return -lsd + LAMBDA * f_norm
-    def q_update(t_cnt, q_opt_state, f_opt_state, x_batch):
+    def q_update(t_cnt, q_opt_state, f_opt_state, x_batch, rng):
         q_params = q_get_params(q_opt_state)
         f_params = f_get_params(f_opt_state)
-        loss_val, grad_val = jax.value_and_grad(q_loss, argnums = 0)(q_params, f_params, x_batch)
+        loss_val, grad_val = jax.value_and_grad(q_loss, argnums = 0)(q_params, f_params, x_batch, rng)
         q_opt_state = q_opt_update(t_cnt, grad_val, q_opt_state)
         return q_opt_state, loss_val
-    def f_update(c_cnt, q_opt_state, f_opt_state, x_batch):
+    def f_update(c_cnt, q_opt_state, f_opt_state, x_batch, rng):
         q_params = q_get_params(q_opt_state)
         f_params = f_get_params(f_opt_state)
-        loss_val, grad_val = jax.value_and_grad(f_loss, argnums = 1)(q_params, f_params, x_batch)
+        loss_val, grad_val = jax.value_and_grad(f_loss, argnums = 1)(q_params, f_params, x_batch, rng)
         f_opt_state = f_opt_update(c_cnt, grad_val, f_opt_state)
         return f_opt_state, loss_val
     @jax.jit
     def update( t_cnt, c_cnt,
-                q_opt_state, f_opt_state, x_batch):
+                q_opt_state, f_opt_state, x_batch,
+                rng):
         idx = 0
-        q_opt_state, q_loss_val = q_update(t_cnt, q_opt_state, f_opt_state, x_batch[idx * BATCH_SIZE : (idx+1) * BATCH_SIZE])
+
+        rngs = jax.random.split(rng, (1 + C) + 1)
+        q_opt_state, q_loss_val = q_update(t_cnt, q_opt_state, f_opt_state, x_batch[idx * BATCH_SIZE : (idx+1) * BATCH_SIZE], rngs[idx])
         idx += 1
         t_cnt += 1
         for _ in range(C):
-            f_opt_state, f_loss_val = f_update(c_cnt, q_opt_state, f_opt_state, x_batch[idx * BATCH_SIZE : (idx+1) * BATCH_SIZE])
+            f_opt_state, f_loss_val = f_update(c_cnt, q_opt_state, f_opt_state, x_batch[idx * BATCH_SIZE : (idx+1) * BATCH_SIZE], rngs[idx])
             idx += 1
             c_cnt += 1
-        return t_cnt, c_cnt, q_opt_state, f_opt_state, q_loss_val, f_loss_val
+        return t_cnt, c_cnt, q_opt_state, f_opt_state, q_loss_val, f_loss_val, rngs[idx]
 
     _, q_init_params = q_init_fun(rng_q, (BATCH_SIZE, X_DIM))
     q_opt_state = q_opt_init(q_init_params)
@@ -200,8 +207,8 @@ def main():
         x_batch = sampler.sample()
         x_record = update_x_record(x_record, x_batch)
 
-        t, c, q_opt_state, f_opt_state, q_loss_val, f_loss_val \
-            = update(t, c, q_opt_state, f_opt_state, x_batch)
+        t, c, q_opt_state, f_opt_state, q_loss_val, f_loss_val, _rng \
+            = update(t, c, q_opt_state, f_opt_state, x_batch, _rng)
 
         t1 = time.time()
         if t1 - t0 > 10.0:
