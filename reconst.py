@@ -5,6 +5,7 @@ from jax.experimental.stax import serial, Dense, elementwise, FanOut, FanInSum, 
 import jax.experimental.optimizers as optimizers
 import jax.numpy as jnp
 from ebm.sampler import Sampler
+from model.maker.model_maker import net_maker
 
 SEED = 0
 BATCH_SIZE = 100
@@ -35,9 +36,12 @@ def SkipDense(unit_num):
     return serial(FanOut(2), parallel(Dense(unit_num), Identity), FanInSum)
 
 def mlp(out_ch):
-    return serial(  Dense(300), Swish(),
-                    Dense(300), Swish(),
-                    Dense(out_ch))
+    net = net_maker()
+    for _ in range(2):
+        net.add_layer(Dense(300))
+        net.add_layer(Swish())
+    net.add_layer(Dense(out_ch), name = "out")
+    return net.get_jax_model()
 
 def gaussian_net(base_net, scale):
     base_init_fun, base_apply_fun = base_net
@@ -55,7 +59,7 @@ def gaussian_net(base_net, scale):
         mu, log_sigma = params[-1]
         mu = mu.reshape(tuple([1] + list(mu.shape)))
         sigma = jnp.exp(log_sigma)
-        base_output = base_apply_fun(base_params, inputs)
+        base_output = base_apply_fun(base_params, inputs)["out"]
         log_gauss = - ((inputs - mu) ** 2).sum(axis = -1) / (2 * sigma ** 2)
         log_gauss = log_gauss.reshape((base_output.shape[0], -1))
         ret = base_output + log_gauss
@@ -115,7 +119,9 @@ def main():
     scale = get_scale(sampler)
 
     q_init_fun, q_apply_fun = gaussian_net(mlp(1), scale)
-    f_init_fun, f_apply_fun = mlp(2)
+    f_init_fun, f_apply_fun_raw = mlp(2)
+    def f_apply_fun(f_params, x):
+        return f_apply_fun_raw(f_params, x)["out"]
     q_opt_init, q_opt_update, q_get_params = \
         optimizers.adam(LR, b1=B1, b2=B2)
     f_opt_init, f_opt_update, f_get_params = \
