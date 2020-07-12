@@ -5,51 +5,47 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from tqdm import tqdm
 PROB_TYPE = "center_wave"
+cenwav_param = [[0.4, 0.1],
+                [0.8, 0.1],
+                ]
+select = []
+for i in range(len(cenwav_param)):
+    for j in range((i + 1)):
+        select += [i]
 
 class Sampler:
     def __init__(self, rng, batch_size, half_band):
-        self.__maker = self.__Maker(rng, batch_size, half_band)
+        self.__rng = rng
+        self.__batch_size = batch_size
         self.__half_band = half_band
 
-        bin_num = max(batch_size * 2, 256)
-        x = jnp.linspace(-half_band, half_band, bin_num)
-        x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
-        y = jnp.linspace(-half_band, half_band, bin_num)
-        y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
-        data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
-        assert(data.shape == (bin_num * bin_num, 2))
-        unnorm_map = self.__unnorm_prob(data)
-        self.__unnorm_max_val = unnorm_map.max()
-        self.__norm = unnorm_map.sum() * ((2 * half_band / bin_num) ** 2)
     def sample(self):
-        return next(self.__maker)
-
-    def __Maker(self, rng, batch_size, half_band):
-
-        split_num = 8
-        xy = jnp.zeros((batch_size, 2), dtype = jnp.float32)
-        sampled_num = 0
-        while True:
-            rng_x, rng_p, rng = jax.random.split(rng, 3)
-            x = (jax.random.uniform(rng_x, (split_num, 2)) * 2 - 1) * half_band
-            p = jax.random.uniform(rng_p, (split_num,)) * self.__unnorm_max_val
-            is_valid = (p < self.__unnorm_prob(x))
-            assert(is_valid.shape == (split_num,))
-            valid_num = is_valid.sum()
-            if valid_num > 0:
-                valid_indexes = jnp.where(is_valid)[0]
-                assert(valid_indexes.size == valid_num)
-                remain_num = batch_size - sampled_num
-                add_num = min(remain_num, valid_num)
-                xy = jax.ops.index_update(xy, jax.ops.index[sampled_num:sampled_num + add_num], x[is_valid][:add_num])
-                sampled_num += add_num
-                if sampled_num >= batch_size:
-                    yield xy
-                    sampled_num = 0
+        if PROB_TYPE == "center_wave":
+            rng_i, rng_r, rng_t, self.__rng = jax.random.split(self.__rng, 4)
+            num = ((1 + jnp.arange(len(cenwav_param)))).sum()
+            n = jax.random.randint(rng_i, (1,), 0, num)
+            cr, s = cenwav_param[select[int(n)]]
+            cr = cr * self.__half_band
+            s = s * self.__half_band
+            rawr = jax.random.normal( rng_r, (self.__batch_size,))
+            rawt = jax.random.uniform(rng_t, (self.__batch_size,))
+            r = jnp.abs(cr + rawr * s)
+            t = rawt * (2 * jnp.pi)
+            x0 = r * jnp.cos(t)
+            x1 = r * jnp.sin(t)
+            x = jnp.append(x0.reshape((-1, 1)), x1.reshape((-1, 1)), axis = 1)
+        return x
     
-    # normalized probability density
+
     def prob(self, x):
-        return self.__unnorm_prob(x) / self.__norm
+        if PROB_TYPE == "center_wave":
+            p = 0.0
+            for cr, s in cenwav_param:
+                cr = cr * self.__half_band
+                s = s * self.__half_band
+                power = - ((((x ** 2).sum(axis = -1) ** 0.5) - cr) ** 2) / (2 * (s ** 2))
+                p += jnp.exp(power)
+        return p
 
     # unnormalized probability density
     def __unnorm_prob(self, x):
@@ -96,34 +92,12 @@ class Sampler:
                 ret *= (weight)
         return ret
 
-def exect_plot():
-    bin_num = 50
-    half_band = 1.0
-    x = jnp.linspace(-half_band, half_band, bin_num)
-    x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
-    y = jnp.linspace(-half_band, half_band, bin_num)
-    y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
-    data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
-    assert(data.shape == (bin_num * bin_num, 2))
-    rng = jax.random.PRNGKey(0)
-    sampler = Sampler(rng, bin_num ** 2, half_band)
-    z = sampler.prob(data)
-    print(z.mean())
-    assert(z.shape == (bin_num * bin_num,))
-    z = z.reshape((bin_num, bin_num))
-    X = jnp.linspace(-half_band, half_band, bin_num)
-    Y = jnp.linspace(-half_band, half_band, bin_num)
-    X, Y = jnp.meshgrid(X, Y)
-    plt.pcolor(X, Y, z)
-    plt.colorbar()
-    plt.show()
-
-
 def main():
     rng = jax.random.PRNGKey(0)
-    SAMPLE_NUM = 100000
+    SAMPLE_NUM = 1000000
     BATCH_SIZE = 1000
-    half_band = 1
+    half_band = 5
+    bin_num = 100
     s = Sampler(rng, batch_size = BATCH_SIZE, half_band = half_band)
     x_vec = jnp.zeros(SAMPLE_NUM, dtype = jnp.float32)
     y_vec = jnp.zeros(SAMPLE_NUM, dtype = jnp.float32)
@@ -132,14 +106,27 @@ def main():
         x_vec = jax.ops.index_update(x_vec, jax.ops.index[i * BATCH_SIZE:(i + 1) * BATCH_SIZE], xy[:, 0])
         y_vec = jax.ops.index_update(y_vec, jax.ops.index[i * BATCH_SIZE:(i + 1) * BATCH_SIZE], xy[:, 1])
 
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
+    fig = plt.figure(figsize = (10, 5))
 
-    H = ax.hist2d(x_vec, y_vec, bins=40, cmap=cm.jet)
+    ax = fig.add_subplot(121)
+    H = ax.hist2d(x_vec, y_vec, bins = bin_num, cmap=cm.jet)
     ax.set_title('1st graph')
     ax.set_xlabel('x')
     ax.set_ylabel('y')
     fig.colorbar(H[3],ax=ax)
+
+    ax = fig.add_subplot(122)
+    x = jnp.linspace(-half_band, half_band, bin_num)
+    x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
+    y = jnp.linspace(-half_band, half_band, bin_num)
+    y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
+    data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
+    X = jnp.linspace(-half_band, half_band, bin_num)
+    Y = jnp.linspace(-half_band, half_band, bin_num)
+    X, Y = jnp.meshgrid(X, Y)
+    plt.pcolor(X, Y, s.prob(data).reshape((bin_num, bin_num)))
+    plt.colorbar()
+
     plt.show()
 
 if __name__ == "__main__":
