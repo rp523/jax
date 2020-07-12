@@ -5,7 +5,13 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from tqdm import tqdm
 PROB_TYPE = "center_wave"
-cenwav_param = [[0.5, 0.1]]
+cenwav_param = [[0.4, 0.1],
+                [0.8, 0.1],
+                ]
+select = []
+for i in range(len(cenwav_param)):
+    for j in range((i + 1)):
+        select += [i]
 
 class Sampler:
     def __init__(self, rng, batch_size, half_band):
@@ -14,29 +20,31 @@ class Sampler:
         self.__half_band = half_band
 
     def sample(self):
-        x = jnp.zeros((self.__batch_size, 2))
         if PROB_TYPE == "center_wave":
-            for cr, s in cenwav_param:
-                cr = cr * self.__half_band
-                s = s * self.__half_band
-                rng_r, rng_t, self.__rng = jax.random.split(self.__rng, 3)
-                rawr = jax.random.normal( rng_r, (self.__batch_size,))
-                rawt = jax.random.uniform(rng_t, (self.__batch_size,))
-                r = jnp.abs(cr + rawr * s)
-                t = rawt * (2 * jnp.pi)
-                x0 = r * jnp.cos(t)
-                x1 = r * jnp.sin(t)
-                x += jnp.append(x0.reshape((-1, 1)), x1.reshape((-1, 1)), axis = 1)
+            rng_i, rng_r, rng_t, self.__rng = jax.random.split(self.__rng, 4)
+            num = ((1 + jnp.arange(len(cenwav_param)))).sum()
+            n = jax.random.randint(rng_i, (1,), 0, num)
+            cr, s = cenwav_param[select[int(n)]]
+            cr = cr * self.__half_band
+            s = s * self.__half_band
+            rawr = jax.random.normal( rng_r, (self.__batch_size,))
+            rawt = jax.random.uniform(rng_t, (self.__batch_size,))
+            r = jnp.abs(cr + rawr * s)
+            t = rawt * (2 * jnp.pi)
+            x0 = r * jnp.cos(t)
+            x1 = r * jnp.sin(t)
+            x = jnp.append(x0.reshape((-1, 1)), x1.reshape((-1, 1)), axis = 1)
         return x
     
 
     def prob(self, x):
         if PROB_TYPE == "center_wave":
+            p = 0.0
             for cr, s in cenwav_param:
                 cr = cr * self.__half_band
                 s = s * self.__half_band
                 power = - ((((x ** 2).sum(axis = -1) ** 0.5) - cr) ** 2) / (2 * (s ** 2))
-                p = jnp.exp(power)
+                p += jnp.exp(power)
         return p
 
     # unnormalized probability density

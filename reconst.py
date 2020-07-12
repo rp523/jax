@@ -1,7 +1,7 @@
 import os, time
 from matplotlib import pyplot as plt
 import jax
-from jax.experimental.stax import serial, Dense, elementwise
+from jax.experimental.stax import serial, Dense, elementwise, FanOut, FanInSum, parallel, Identity
 import jax.experimental.optimizers as optimizers
 import jax.numpy as jnp
 from ebm.sampler import Sampler
@@ -31,11 +31,12 @@ def Swish():
         return out
     return init_fun, apply_fun
 
+def SkipDense(unit_num):
+    return serial(FanOut(2), parallel(Dense(unit_num), Identity), FanInSum)
+
 def mlp(out_ch):
-    return serial(  Dense(300),
-                    Swish(),
-                    Dense(300),
-                    Swish(),
+    return serial(  Dense(300), Swish(),
+                    Dense(300), Swish(),
                     Dense(out_ch))
 
 def gaussian_net(base_net, scale):
