@@ -155,7 +155,8 @@ def main():
         return lsd, f_norm
     def q_loss(q_params, f_params, x_batch, rng):
         lsd, _ =  calc_loss_metrics(q_params, f_params, x_batch, rng)
-        return lsd
+        loss = lsd + 1E-5 * net_maker.weight_decay(q_params)
+        return loss
     def f_loss(q_params, f_params, x_batch, rng):
         lsd, f_norm =  calc_loss_metrics(q_params, f_params, x_batch, rng)
         return -lsd + LAMBDA * f_norm
