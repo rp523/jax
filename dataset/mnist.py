@@ -18,7 +18,7 @@ class Mnist:
             "test_img":"t10k-images-idx3-ubyte.gz",
             "test_label":"t10k-labels-idx1-ubyte.gz"
         }
-        dir_path = os.path.join(os.path.dirname(__file__), "mnist")
+        dir_path = "mnist"
         if not os.path.exists(dir_path):
             os.makedirs(dir_path)
         for file_name in self.__key_file.values():
