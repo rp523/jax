@@ -6,3 +6,5 @@ __pycache__/checkpoint.cpython-37.pyc
 ebm/__pycache__/sampler.cpython-37.pyc
 test.py
 ebm/sampler.py.bak
+ebm/__pycache__/toy_sampler.cpython-37.pyc
+ebm/__pycache__/lsd.cpython-37.pyc
