@@ -5,7 +5,7 @@ from model.maker.model_maker import net_maker
 class LSD_Learner:
 
     @staticmethod
-    def calc_sq_batch(q_params, x_batch, arg_q_apply_fun):
+    def __calc_sq_batch(q_params, x_batch, arg_q_apply_fun):
         def logq_sum(q_params, x_batch):
             logq_batch = arg_q_apply_fun(q_params, x_batch)
             return logq_batch.sum()
@@ -13,14 +13,14 @@ class LSD_Learner:
         return sq_batch
 
     @staticmethod
-    def calc_efficient_trace(f_params, x_batch, arg_f_apply_fun, rng):
+    def __calc_efficient_trace(f_params, x_batch, arg_f_apply_fun, rng):
         eps = jax.random.normal(rng, x_batch.shape)
         fx, vjp_fun = jax.vjp(arg_f_apply_fun, f_params, x_batch)
         dp, dx = vjp_fun(eps)
         return (dx * eps).sum(axis = -1), fx
 
     @staticmethod
-    def calc_exact_trace(f_params, x_batch, arg_f_apply_fun):
+    def __calc_exact_trace(f_params, x_batch, arg_f_apply_fun):
         trace_batch = jnp.zeros((BATCH_SIZE,))
         def f_apply_fun_dim(f_params, x_batch, idx):
             return arg_f_apply_fun(f_params, x_batch)[:, idx].sum()
@@ -30,27 +30,27 @@ class LSD_Learner:
         return trace_batch
 
     @staticmethod
-    def calc_loss_metrics(  q_params, f_params, x_batch,
+    def __calc_loss_metrics(  q_params, f_params, x_batch,
                             arg_q_apply_fun, arg_f_apply_fun, rng):
-        tr_dfdx_batch, fx_batch = LSD_Learner.calc_efficient_trace(f_params, x_batch, arg_f_apply_fun, rng)
-        sq_batch = LSD_Learner.calc_sq_batch(q_params, x_batch, arg_q_apply_fun)
+        tr_dfdx_batch, fx_batch = LSD_Learner.__calc_efficient_trace(f_params, x_batch, arg_f_apply_fun, rng)
+        sq_batch = LSD_Learner.__calc_sq_batch(q_params, x_batch, arg_q_apply_fun)
         sq_fx_batch = (sq_batch * fx_batch).sum(axis = -1)
         lsd = (sq_fx_batch + tr_dfdx_batch).mean()
         f_norm = (fx_batch * fx_batch).sum(axis = -1).mean()
         return lsd, f_norm
 
     @staticmethod
-    def q_loss( q_params, f_params, x_batch,
+    def __q_loss( q_params, f_params, x_batch,
                 arg_q_apply_fun, arg_f_apply_fun, rng):
-        lsd, _ =  LSD_Learner.calc_loss_metrics(q_params, f_params, x_batch,
+        lsd, _ =  LSD_Learner.__calc_loss_metrics(q_params, f_params, x_batch,
                                     arg_q_apply_fun, arg_f_apply_fun, rng)
         loss = lsd + 1E-5 * net_maker.weight_decay(q_params)
         return loss
 
     @staticmethod
-    def f_loss( q_params, f_params, x_batch, l2_weight,
+    def __f_loss( q_params, f_params, x_batch, l2_weight,
                 arg_q_apply_fun, arg_f_apply_fun, rng):
-        lsd, f_norm =  LSD_Learner.calc_loss_metrics(   q_params, f_params, x_batch,
+        lsd, f_norm =  LSD_Learner.__calc_loss_metrics(   q_params, f_params, x_batch,
                                             arg_q_apply_fun, arg_f_apply_fun, rng)
         return -lsd + l2_weight * f_norm
 
@@ -59,7 +59,7 @@ class LSD_Learner:
                     arg_q_apply_fun, arg_f_apply_fun, arg_q_get_params, arg_f_get_params, arg_q_opt_update, rng):
         q_params = arg_q_get_params(q_opt_state)
         f_params = arg_f_get_params(f_opt_state)
-        loss_val, grad_val = jax.value_and_grad(LSD_Learner.q_loss, argnums = 0)(q_params, f_params, x_batch, arg_q_apply_fun, arg_f_apply_fun, rng)
+        loss_val, grad_val = jax.value_and_grad(LSD_Learner.__q_loss, argnums = 0)(q_params, f_params, x_batch, arg_q_apply_fun, arg_f_apply_fun, rng)
         q_opt_state = arg_q_opt_update(t_cnt, grad_val, q_opt_state)
         return q_opt_state, loss_val
 
@@ -68,7 +68,7 @@ class LSD_Learner:
                     arg_q_apply_fun, arg_f_apply_fun, arg_q_get_params, arg_f_get_params, arg_f_opt_update, rng):
         q_params = arg_q_get_params(q_opt_state)
         f_params = arg_f_get_params(f_opt_state)
-        loss_val, grad_val = jax.value_and_grad(LSD_Learner.f_loss, argnums = 1)(q_params, f_params, x_batch, l2_weight, arg_q_apply_fun, arg_f_apply_fun, rng)
+        loss_val, grad_val = jax.value_and_grad(LSD_Learner.__f_loss, argnums = 1)(q_params, f_params, x_batch, l2_weight, arg_q_apply_fun, arg_f_apply_fun, rng)
         f_opt_state = arg_f_opt_update(c_cnt, grad_val, f_opt_state)
         return f_opt_state, loss_val
         
@@ -95,3 +95,11 @@ class LSD_Learner:
             ret = base_output + log_gauss
             return ret
         return init_fun, apply_fun
+
+    @staticmethod
+    def get_scale(sampler, sample_num, x_dim):
+        x = jnp.empty((0, x_dim))
+        while x.shape[0] <= sample_num:
+            x = jnp.append(x, sampler.sample(), axis = 0)
+        return x.mean(), x.std()
+

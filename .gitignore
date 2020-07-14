@@ -8,3 +8,5 @@ test.py
 ebm/sampler.py.bak
 ebm/__pycache__/toy_sampler.cpython-37.pyc
 ebm/__pycache__/lsd.cpython-37.pyc
+dataset/__pycache__/__init__.cpython-37.pyc
+dataset/__pycache__/mnist.cpython-37.pyc
