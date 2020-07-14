@@ -43,14 +43,14 @@ def mlp(out_ch):
     net.add_layer(Dense(out_ch), name = "out")
     return net.get_jax_model()
 
-def gaussian_net(base_net, scale):
+def gaussian_net(base_net, init_mu, init_sigma):
     base_init_fun, base_apply_fun = base_net
     def init_fun(rng, input_shape):
         rng_base, rng_mu, rng_sigma = jax.random.split(rng, 3)
         _, base_params = base_init_fun(rng_base, input_shape)
         mu_shape = tuple(input_shape[1:])
-        mu = jax.nn.initializers.zeros(rng_mu, mu_shape)
-        log_sigma = jnp.log(jax.nn.initializers.ones(rng_sigma, (1,)) * scale)
+        mu = jax.nn.initializers.ones(rng_mu, mu_shape) * init_mu
+        log_sigma = jnp.log(jax.nn.initializers.ones(rng_sigma, (1,)) * init_sigma)
         params = list(base_params) + [(mu, log_sigma)]
         output_shape = input_shape
         return output_shape, params
@@ -107,21 +107,81 @@ def save_map(   q_apply_fun, q_params,
     plt.savefig(save_path)
 
 def get_scale(sampler):
-    total = 0
     x = jnp.empty((0, X_DIM))
     while x.shape[0] <= 1000:
         x = jnp.append(x, sampler.sample(), axis = 0)
-    scale = x.std()
-    return scale
+    return x.mean(), x.std()
+
+class LSD_Learner:
+    @staticmethod
+    def calc_sq_batch(q_params, x_batch, arg_q_apply_fun):
+        def logq_sum(q_params, x_batch):
+            logq_batch = arg_q_apply_fun(q_params, x_batch)
+            return logq_batch.sum()
+        sq_batch = jax.grad(logq_sum, argnums = 1)(q_params, x_batch) # ▽x(Log(q))
+        return sq_batch
+    @staticmethod
+    def calc_efficient_trace(f_params, x_batch, arg_f_apply_fun, rng):
+        eps = jax.random.normal(rng, x_batch.shape)
+        fx, vjp_fun = jax.vjp(arg_f_apply_fun, f_params, x_batch)
+        dp, dx = vjp_fun(eps)
+        return (dx * eps).sum(axis = -1), fx
+    @staticmethod
+    def calc_exact_trace(f_params, x_batch, arg_f_apply_fun):
+        trace_batch = jnp.zeros((BATCH_SIZE,))
+        def f_apply_fun_dim(f_params, x_batch, idx):
+            return arg_f_apply_fun(f_params, x_batch)[:, idx].sum()
+        for d in range(X_DIM):
+            trace_comp = jax.grad(f_apply_fun_dim, argnums = 1)(f_params, x_batch, d)[:, d]
+            trace_batch += trace_comp
+        return trace_batch
+    @staticmethod
+    def calc_loss_metrics(  q_params, f_params, x_batch,
+                            arg_q_apply_fun, arg_f_apply_fun, rng):
+        tr_dfdx_batch, fx_batch = LSD_Learner.calc_efficient_trace(f_params, x_batch, arg_f_apply_fun, rng)
+        sq_batch = LSD_Learner.calc_sq_batch(q_params, x_batch, arg_q_apply_fun)
+        sq_fx_batch = (sq_batch * fx_batch).sum(axis = -1)
+        lsd = (sq_fx_batch + tr_dfdx_batch).mean()
+        f_norm = (fx_batch * fx_batch).sum(axis = -1).mean()
+        return lsd, f_norm
+    @staticmethod
+    def q_loss( q_params, f_params, x_batch,
+                arg_q_apply_fun, arg_f_apply_fun, rng):
+        lsd, _ =  LSD_Learner.calc_loss_metrics(q_params, f_params, x_batch,
+                                    arg_q_apply_fun, arg_f_apply_fun, rng)
+        loss = lsd + 1E-5 * net_maker.weight_decay(q_params)
+        return loss
+    @staticmethod
+    def f_loss( q_params, f_params, x_batch,
+                arg_q_apply_fun, arg_f_apply_fun, rng):
+        lsd, f_norm =  LSD_Learner.calc_loss_metrics(   q_params, f_params, x_batch,
+                                            arg_q_apply_fun, arg_f_apply_fun, rng)
+        return -lsd + LAMBDA * f_norm
+    @staticmethod
+    def q_update(   t_cnt, q_opt_state, f_opt_state, x_batch,
+                    arg_q_apply_fun, arg_f_apply_fun, arg_q_get_params, arg_f_get_params, arg_q_opt_update, rng):
+        q_params = arg_q_get_params(q_opt_state)
+        f_params = arg_f_get_params(f_opt_state)
+        loss_val, grad_val = jax.value_and_grad(LSD_Learner.q_loss, argnums = 0)(q_params, f_params, x_batch, arg_q_apply_fun, arg_f_apply_fun, rng)
+        q_opt_state = arg_q_opt_update(t_cnt, grad_val, q_opt_state)
+        return q_opt_state, loss_val
+    @staticmethod
+    def f_update(c_cnt, q_opt_state, f_opt_state, x_batch,
+                    arg_q_apply_fun, arg_f_apply_fun, arg_q_get_params, arg_f_get_params, arg_f_opt_update, rng):
+        q_params = arg_q_get_params(q_opt_state)
+        f_params = arg_f_get_params(f_opt_state)
+        loss_val, grad_val = jax.value_and_grad(LSD_Learner.f_loss, argnums = 1)(q_params, f_params, x_batch, arg_q_apply_fun, arg_f_apply_fun, rng)
+        f_opt_state = arg_f_opt_update(c_cnt, grad_val, f_opt_state)
+        return f_opt_state, loss_val
 
 def main():
     _rng = jax.random.PRNGKey(SEED)
     
     _rng, rng_s, rng_q, rng_f = jax.random.split(_rng, 4)
     sampler = Sampler(rng_s, BATCH_SIZE * (C + 1), HALF_BAND)
-    scale = get_scale(sampler)
+    mu, sigma = get_scale(sampler)
 
-    q_init_fun, q_apply_fun = gaussian_net(mlp(1), scale)
+    q_init_fun, q_apply_fun = gaussian_net(mlp(1), mu, sigma)
     f_init_fun, f_apply_fun_raw = mlp(2)
     def f_apply_fun(f_params, x):
         return f_apply_fun_raw(f_params, x)["out"]
@@ -130,51 +190,6 @@ def main():
     f_opt_init, f_opt_update, f_get_params = \
         optimizers.adam(LR, b1=B1, b2=B2)
 
-    def calc_sq_batch(q_params, x_batch):
-        def logq_sum(q_params, x_batch):
-            logq_batch = q_apply_fun(q_params, x_batch)
-            return logq_batch.sum()
-        sq_batch = jax.grad(logq_sum, argnums = 1)(q_params, x_batch) # ▽x(Log(q))
-        return sq_batch
-    def calc_efficient_trace(f_params, x_batch, rng):
-        eps = jax.random.normal(rng, x_batch.shape)
-        fx, vjp_fun = jax.vjp(f_apply_fun, f_params, x_batch)
-        dp, dx = vjp_fun(eps)
-        return (dx * eps).sum(axis = -1), fx
-    def calc_exact_trace(f_params, x_batch):
-        trace_batch = jnp.zeros((BATCH_SIZE,))
-        def f_apply_fun_dim(f_params, x_batch, idx):
-            return f_apply_fun(f_params, x_batch)[:, idx].sum()
-        for d in range(X_DIM):
-            trace_comp = jax.grad(f_apply_fun_dim, argnums = 1)(f_params, x_batch, d)[:, d]
-            trace_batch += trace_comp
-        return trace_batch
-    def calc_loss_metrics(q_params, f_params, x_batch, rng):
-        tr_dfdx_batch, fx_batch = calc_efficient_trace(f_params, x_batch, rng)
-        sq_batch = calc_sq_batch(q_params, x_batch)
-        sq_fx_batch = (sq_batch * fx_batch).sum(axis = -1)
-        lsd = (sq_fx_batch + tr_dfdx_batch).mean()
-        f_norm = (fx_batch * fx_batch).sum(axis = -1).mean()
-        return lsd, f_norm
-    def q_loss(q_params, f_params, x_batch, rng):
-        lsd, _ =  calc_loss_metrics(q_params, f_params, x_batch, rng)
-        loss = lsd + 1E-5 * net_maker.weight_decay(q_params)
-        return loss
-    def f_loss(q_params, f_params, x_batch, rng):
-        lsd, f_norm =  calc_loss_metrics(q_params, f_params, x_batch, rng)
-        return -lsd + LAMBDA * f_norm
-    def q_update(t_cnt, q_opt_state, f_opt_state, x_batch, rng):
-        q_params = q_get_params(q_opt_state)
-        f_params = f_get_params(f_opt_state)
-        loss_val, grad_val = jax.value_and_grad(q_loss, argnums = 0)(q_params, f_params, x_batch, rng)
-        q_opt_state = q_opt_update(t_cnt, grad_val, q_opt_state)
-        return q_opt_state, loss_val
-    def f_update(c_cnt, q_opt_state, f_opt_state, x_batch, rng):
-        q_params = q_get_params(q_opt_state)
-        f_params = f_get_params(f_opt_state)
-        loss_val, grad_val = jax.value_and_grad(f_loss, argnums = 1)(q_params, f_params, x_batch, rng)
-        f_opt_state = f_opt_update(c_cnt, grad_val, f_opt_state)
-        return f_opt_state, loss_val
     @jax.jit
     def update( t_cnt, c_cnt,
                 q_opt_state, f_opt_state, x_batch,
@@ -182,11 +197,13 @@ def main():
         idx = 0
 
         rngs = jax.random.split(rng, (1 + C) + 1)
-        q_opt_state, q_loss_val = q_update(t_cnt, q_opt_state, f_opt_state, x_batch[idx * BATCH_SIZE : (idx+1) * BATCH_SIZE], rngs[idx])
+        q_opt_state, q_loss_val = LSD_Learner.q_update(t_cnt, q_opt_state, f_opt_state, x_batch[idx * BATCH_SIZE : (idx+1) * BATCH_SIZE],
+                                                q_apply_fun, f_apply_fun, q_get_params, f_get_params, q_opt_update, rngs[idx])
         idx += 1
         t_cnt += 1
         for _ in range(C):
-            f_opt_state, f_loss_val = f_update(c_cnt, q_opt_state, f_opt_state, x_batch[idx * BATCH_SIZE : (idx+1) * BATCH_SIZE], rngs[idx])
+            f_opt_state, f_loss_val = LSD_Learner.f_update( c_cnt, q_opt_state, f_opt_state, x_batch[idx * BATCH_SIZE : (idx+1) * BATCH_SIZE],
+                                                q_apply_fun, f_apply_fun, q_get_params, f_get_params, f_opt_update, rngs[idx])
             idx += 1
             c_cnt += 1
         return t_cnt, c_cnt, q_opt_state, f_opt_state, q_loss_val, f_loss_val, rngs[idx]
