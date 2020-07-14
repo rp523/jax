@@ -2,7 +2,7 @@ import os, time, pickle
 from matplotlib import pyplot as plt
 import jax
 import jax.numpy as jnp
-from jax.experimental.stax import serial, Dense, elementwise, FanOut, FanInSum, parallel, Identity
+from jax.experimental.stax import serial, Dense, elementwise, FanOut, FanInSum, parallel, Identity, Conv
 import jax.experimental.optimizers as optimizers
 from dataset.mnist import Mnist
 from ebm.lsd import LSD_Learner
@@ -16,7 +16,7 @@ Q_LR = 1E-4
 F_LR = 1E-4
 LAMBDA = 10
 C = 5
-bin_num = 100
+FOCAL_GAMMA = 2.0
 
 def Swish():
     def init_fun(rng, input_shape):
@@ -97,7 +97,7 @@ def main():
         return a["log_density"]
     def classify_loss(q_params, x_batch, y_batch):
         y_pred = q_apply_fun_classify(q_params, x_batch)
-        cross_entropy = (- y_batch * jnp.log(y_pred + 1E-10)).mean()
+        cross_entropy = (- y_batch * ((1.0 - y_pred) ** FOCAL_GAMMA) * jnp.log(y_pred + 1E-10)).sum()
         weight_loss = net_maker.weight_decay(q_params)
         return (cross_entropy + 1E-5 * weight_loss)
     def classify_update(l_cnt, q_opt_state, x_batch, y_batch):
@@ -165,7 +165,7 @@ def main():
         t1 = time.time()
         if t1 - t0 > 10.0:
             news = f_get_params(f_opt_state)
-            print(  l,
+            print(  "{:.2f}epoch".format(l / (60000 / BATCH_SIZE)),
                     "{:.2f}sec".format(t1 - t0),
                     "{:.2f}%".format(accuracy(q_get_params(q_opt_state), test_sampler) * 100),
                     "qx_loss={:.2f}".format(q_loss_val),
