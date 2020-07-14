@@ -13,8 +13,6 @@ BATCH_SIZE = 100
 X_DIM = 2
 HALF_BAND = 5.0
 LR = 1E-4
-B1 = 0.0
-B2 = 0.999
 LAMBDA = 10
 C = 5
 bin_num = 100
@@ -84,27 +82,21 @@ def save_map(   q_apply_fun, q_params,
 
     plt.savefig(save_path)
 
-def get_scale(sampler):
-    x = jnp.empty((0, X_DIM))
-    while x.shape[0] <= 1000:
-        x = jnp.append(x, sampler.sample(), axis = 0)
-    return x.mean(), x.std()
-
 def main():
     _rng = jax.random.PRNGKey(SEED)
     
     _rng, rng_s, rng_q, rng_f = jax.random.split(_rng, 4)
     sampler = Sampler(rng_s, BATCH_SIZE * (C + 1), HALF_BAND)
-    mu, sigma = get_scale(sampler)
+    mu, sigma = LSD_Learner.get_scale(sampler, 1000, X_DIM)
 
     q_init_fun, q_apply_fun = LSD_Learner.gaussian_net(mlp(1), mu, sigma)
     f_init_fun, f_apply_fun_raw = mlp(2)
     def f_apply_fun(f_params, x):
         return f_apply_fun_raw(f_params, x)["out"]
     q_opt_init, q_opt_update, q_get_params = \
-        optimizers.adam(LR, b1=B1, b2=B2)
+        optimizers.adam(LR)
     f_opt_init, f_opt_update, f_get_params = \
-        optimizers.adam(LR, b1=B1, b2=B2)
+        optimizers.adam(LR)
 
     @jax.jit
     def update( t_cnt, c_cnt,
