@@ -7,11 +7,12 @@ import jax
 import jax.numpy as jnp
 
 class Mnist:
-    def __init__(self, rng, batch_size, data_type, one_hot, dequantize):
+    def __init__(self, rng, batch_size, data_type, one_hot, dequantize, flatten):
         self.__batch_size = batch_size
         self.__rng = rng
         self.__data_type = data_type
         self.__one_hot = one_hot
+        self.__flatten = flatten
 
         url_base = "http://yann.lecun.com/exdb/mnist/"
         self.__key_file = {
@@ -64,7 +65,7 @@ class Mnist:
                 print(dst_path)
                 count[int(label)] += 1
 
-    def sample(self):
+    def sample(self, get_all = False):
         if self.__data_type == "train":
             imgs = self.__all_data["train_img"]
             lbls = self.__all_data["train_label"]
@@ -73,15 +74,22 @@ class Mnist:
             lbls = self.__all_data["test_label"]
         data_num = imgs.shape[0]
 
-        self.__rng, _rng = jax.random.split(self.__rng)
-        sel_idxs = jax.random.randint(_rng, (self.__batch_size,), 0, data_num)
-        sel_idxs = np.array(sel_idxs)
+        if get_all is False:
+            self.__rng, _rng = jax.random.split(self.__rng)
+            sel_idxs = jax.random.randint(_rng, (self.__batch_size,), 0, data_num)
+            sel_idxs = np.array(sel_idxs)
 
-        sel_imgs = imgs[sel_idxs]
-        sel_lbls = lbls[sel_idxs]
+            sel_imgs = imgs[sel_idxs]
+            sel_lbls = lbls[sel_idxs]
+        else:
+            sel_imgs = imgs
+            sel_lbls = lbls
+        
+        if self.__flatten:
+            sel_imgs = sel_imgs.reshape((sel_imgs.shape[0], -1))
+
         if self.__one_hot:
             sel_lbls = jnp.eye(10)[sel_lbls]
-            
         return sel_imgs, sel_lbls 
     
     @staticmethod
