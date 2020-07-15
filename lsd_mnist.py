@@ -1,4 +1,4 @@
-import os, time, pickle
+import os, time, pickle, argparse
 from matplotlib import pyplot as plt
 import jax
 import jax.numpy as jnp
@@ -75,7 +75,7 @@ def get_scale(sampler, sample_num, x_dim):
         x = jnp.append(x, x_new.reshape((x_new.shape[0], -1)), axis = 0)
     return x.mean(), x.std()
 
-def main():
+def main(is_eval):
     _rng = jax.random.PRNGKey(SEED)
     
     _rng, rng_d, rng_q, rng_f = jax.random.split(_rng, 4)
@@ -154,7 +154,7 @@ def main():
     l = t = c = 0
     q_loss_val = f_loss_val = 0.0
     olds = f_get_params(f_opt_state)
-    while True:
+    while not is_eval:
         x_batch, y_batch = train_sampler.sample()
         x_batch = x_batch.reshape((x_batch.shape[0], -1))
 
@@ -178,5 +178,8 @@ def main():
             pickle.dump((q_get_params(q_opt_state), f_get_params(f_opt_state)), open(SAVE_PATH, "wb"))
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--eval", action = "store_true")
+    arg = parser.parse_args()
+    main(arg.eval)
     print("Done.")
