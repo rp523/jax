@@ -1,4 +1,6 @@
-import os, time, pickle
+import os, time, pickle, argparse
+import numpy as np
+from tqdm import tqdm
 from matplotlib import pyplot as plt
 import jax
 import jax.numpy as jnp
@@ -56,7 +58,7 @@ def jem(base_net, init_mu, init_sigma):
     def apply_fun(params, inputs, **kwargs):
         base_params = params[:-1]
         log_q_xy = base_apply_fun(base_params, inputs)
-        log_q_x_base = jax.scipy.special.logsumexp(log_q_xy, axis = 1)
+        log_q_x_base = jax.scipy.special.logsumexp(log_q_xy, axis = 1).reshape((log_q_xy.shape[0], 1))
 
         mu, log_sigma = params[-1]
         mu = mu.reshape(tuple([1] + list(mu.shape)))
@@ -64,9 +66,50 @@ def jem(base_net, init_mu, init_sigma):
         log_gauss = - ((inputs - mu) ** 2).sum(axis = -1) / (2 * sigma ** 2)
         log_gauss = log_gauss.reshape((log_q_x_base.shape[0], -1))
         log_q_x = log_q_x_base + log_gauss
-        return {"class_prob" : jax.nn.softmax(log_q_xy),
+        return {"class_logit" : log_q_xy,
+                "class_prob" : jax.nn.softmax(log_q_xy),
                 "log_density" : log_q_x}
     return init_fun, apply_fun
+
+def show_result(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sampler):
+    q_params = arg_q_get_params(q_opt_state)
+    test_x, test_lbls = arg_test_sampler.sample(get_all = True)
+    result_dict = arg_q_apply_fun_raw(q_params, test_x)
+    pred_lbls = result_dict["class_prob"].argmax(axis = -1)
+    pred_prob = result_dict["class_prob"].max(axis = -1)
+    pred_logi = result_dict["class_logit"].max(axis = -1)
+    pred_dens = result_dict["log_density"].flatten()
+
+    correct = (pred_lbls == test_lbls)
+    incorrect = (pred_lbls != test_lbls)
+
+    plt.clf()
+    fig = plt.figure(figsize=(15, 5))
+    plot_points = 50
+    for i, (title, metrics, pos) in enumerate( [["softmax_score", pred_prob, 131],
+                                                ["logit_score", pred_logi, 132],
+                                                ["log_density", pred_dens, 133]]):
+        ax = fig.add_subplot(pos)
+        accuracy = np.zeros((plot_points,), dtype = np.float32)
+        error = np.zeros((plot_points,), dtype = np.float32)
+        unlearn = np.zeros((plot_points,), dtype = np.float32)
+        plot_metrics = np.zeros((plot_points,), dtype = np.float32)
+        for i, metric in enumerate(tqdm(np.linspace(metrics.min(), metrics.max(), plot_points))):
+            is_output = (float(metric) <= metrics)
+            accuracy[i] = float(correct[is_output].sum() / is_output.size)
+            error[i] = float(incorrect[is_output].sum() / is_output.size)
+            unlearn[i] = 1.0 - accuracy[i] - error[i] 
+            plot_metrics[i] = float(metric)
+        
+        zeros = np.zeros(error.shape)
+        ones = np.ones(error.shape)
+        plt.fill_between(plot_metrics, zeros, error, facecolor = 'r', alpha=0.5)
+        plt.fill_between(plot_metrics, error, error + unlearn, facecolor = 'g', alpha=0.5)
+        plt.fill_between(plot_metrics, error + unlearn, ones, facecolor = 'b', alpha=0.5)
+        plt.title(title)
+        if i == 0:
+            plt.legend()
+    plt.show()
 
 def get_scale(sampler, sample_num, x_dim):
     x = jnp.empty((0, x_dim))
@@ -75,12 +118,12 @@ def get_scale(sampler, sample_num, x_dim):
         x = jnp.append(x, x_new.reshape((x_new.shape[0], -1)), axis = 0)
     return x.mean(), x.std()
 
-def main():
+def main(is_eval):
     _rng = jax.random.PRNGKey(SEED)
     
     _rng, rng_d, rng_q, rng_f = jax.random.split(_rng, 4)
-    train_sampler = Mnist(rng_d, BATCH_SIZE * (1 + 1 + C), "train", one_hot = True, dequantize = True)
-    test_sampler = Mnist(rng_d, 10000, "test", one_hot = False, dequantize = True)
+    train_sampler = Mnist(rng_d, BATCH_SIZE * (1 + 1 + C), "train", one_hot = True, dequantize = True, flatten = True)
+    test_sampler = Mnist(rng_d, 10000, "test", one_hot = False, dequantize = True, flatten = True)
     mu, sigma = get_scale(train_sampler, 1000, X_DIM)
     print("mu={}, sigma={}".format(mu, sigma))
 
@@ -92,9 +135,7 @@ def main():
     def q_apply_fun_classify(q_params, x_batch):
         return q_apply_fun_raw(q_params, x_batch)["class_prob"]
     def q_apply_fun_density(q_params, x_batch):
-        a = q_apply_fun_raw(q_params, x_batch)
-        assert("log_density" in a.keys())
-        return a["log_density"]
+        return q_apply_fun_raw(q_params, x_batch)["log_density"]
     def classify_loss(q_params, x_batch, y_batch):
         y_pred = q_apply_fun_classify(q_params, x_batch)
         cross_entropy = (- y_batch * ((1.0 - y_pred) ** FOCAL_GAMMA) * jnp.log(y_pred + 1E-10)).sum()
@@ -152,11 +193,10 @@ def main():
 
     t0 = time.time()
     l = t = c = 0
-    q_loss_val = f_loss_val = 0.0
+    q_loss_val, f_loss_val, class_loss_val = 0.0, 0.0, 0.0
     olds = f_get_params(f_opt_state)
-    while True:
+    while not is_eval:
         x_batch, y_batch = train_sampler.sample()
-        x_batch = x_batch.reshape((x_batch.shape[0], -1))
 
         rng1, _rng = jax.random.split(_rng)
         l, t, c, q_opt_state, f_opt_state, q_loss_val, f_loss_val, class_loss_val \
@@ -177,6 +217,11 @@ def main():
             t0 = t1
             pickle.dump((q_get_params(q_opt_state), f_get_params(f_opt_state)), open(SAVE_PATH, "wb"))
 
+    show_result(q_opt_state, q_get_params, q_apply_fun_raw, test_sampler)
+
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--eval", "-e", action = "store_true")
+    arg = parser.parse_args()
+    main(arg.eval)
     print("Done.")

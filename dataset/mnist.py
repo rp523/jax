@@ -7,11 +7,10 @@ import jax
 import jax.numpy as jnp
 
 class Mnist:
-    def __init__(self, rng, batch_size, data_type, one_hot, dequantize):
+    def __init__(self, rng, batch_size, data_type, one_hot, dequantize, flatten, remove_classes = None):
         self.__batch_size = batch_size
         self.__rng = rng
         self.__data_type = data_type
-        self.__one_hot = one_hot
 
         url_base = "http://yann.lecun.com/exdb/mnist/"
         self.__key_file = {
@@ -38,11 +37,25 @@ class Mnist:
                     if dequantize:
                         self.__rng, _rng = jax.random.split(self.__rng)
                         data = Mnist.dequantize(_rng, data)
+                    if flatten:
+                        data = data.reshape((data.shape[0], -1))
                 elif key.find("label") >= 0:
                     data = data[8:].flatten()
                 else:
                     assert(0)
                 self.__all_data[key] = data
+
+        if isinstance(remove_classes, list):
+            for img_key, lbl_key in [["train_img", "train_label"],
+                                     ["test_img", "test_label"]]:
+                for remove_val in remove_classes:
+                    is_remain = (self.__all_data[lbl_key] != remove_val)
+                    self.__all_data[lbl_key] = self.__all_data[lbl_key][is_remain]
+                    self.__all_data[img_key] = self.__all_data[img_key][is_remain]
+
+        if one_hot:
+            for lbl_key in ["train_label", "test_label"]:
+                self.__all_data[lbl_key] = jnp.eye(10)[self.__all_data[lbl_key]]
 
     def test_visualize(self):
         count = {}
@@ -64,7 +77,7 @@ class Mnist:
                 print(dst_path)
                 count[int(label)] += 1
 
-    def sample(self):
+    def sample(self, get_all = False):
         if self.__data_type == "train":
             imgs = self.__all_data["train_img"]
             lbls = self.__all_data["train_label"]
@@ -73,15 +86,17 @@ class Mnist:
             lbls = self.__all_data["test_label"]
         data_num = imgs.shape[0]
 
-        self.__rng, _rng = jax.random.split(self.__rng)
-        sel_idxs = jax.random.randint(_rng, (self.__batch_size,), 0, data_num)
-        sel_idxs = np.array(sel_idxs)
+        if get_all is False:
+            self.__rng, _rng = jax.random.split(self.__rng)
+            sel_idxs = jax.random.randint(_rng, (self.__batch_size,), 0, data_num)
+            sel_idxs = np.array(sel_idxs)
 
-        sel_imgs = imgs[sel_idxs]
-        sel_lbls = lbls[sel_idxs]
-        if self.__one_hot:
-            sel_lbls = jnp.eye(10)[sel_lbls]
-            
+            sel_imgs = imgs[sel_idxs]
+            sel_lbls = lbls[sel_idxs]
+        else:
+            sel_imgs = imgs
+            sel_lbls = lbls
+        
         return sel_imgs, sel_lbls 
     
     @staticmethod
