@@ -7,12 +7,10 @@ import jax
 import jax.numpy as jnp
 
 class Mnist:
-    def __init__(self, rng, batch_size, data_type, one_hot, dequantize, flatten):
+    def __init__(self, rng, batch_size, data_type, one_hot, dequantize, flatten, remove_classes = None):
         self.__batch_size = batch_size
         self.__rng = rng
         self.__data_type = data_type
-        self.__one_hot = one_hot
-        self.__flatten = flatten
 
         url_base = "http://yann.lecun.com/exdb/mnist/"
         self.__key_file = {
@@ -39,11 +37,25 @@ class Mnist:
                     if dequantize:
                         self.__rng, _rng = jax.random.split(self.__rng)
                         data = Mnist.dequantize(_rng, data)
+                    if flatten:
+                        data = data.reshape((data.shape[0], -1))
                 elif key.find("label") >= 0:
                     data = data[8:].flatten()
                 else:
                     assert(0)
                 self.__all_data[key] = data
+
+        if isinstance(remove_classes, list):
+            for img_key, lbl_key in [["train_img", "train_label"],
+                                     ["test_img", "test_label"]]:
+                for remove_val in remove_classes:
+                    is_remain = (self.__all_data[lbl_key] != remove_val)
+                    self.__all_data[lbl_key] = self.__all_data[lbl_key][is_remain]
+                    self.__all_data[img_key] = self.__all_data[img_key][is_remain]
+
+        if one_hot:
+            for lbl_key in ["train_label", "test_label"]:
+                self.__all_data[lbl_key] = jnp.eye(10)[self.__all_data[lbl_key]]
 
     def test_visualize(self):
         count = {}
@@ -85,11 +97,6 @@ class Mnist:
             sel_imgs = imgs
             sel_lbls = lbls
         
-        if self.__flatten:
-            sel_imgs = sel_imgs.reshape((sel_imgs.shape[0], -1))
-
-        if self.__one_hot:
-            sel_lbls = jnp.eye(10)[sel_lbls]
         return sel_imgs, sel_lbls 
     
     @staticmethod

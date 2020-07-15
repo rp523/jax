@@ -193,7 +193,7 @@ def main(is_eval):
 
     t0 = time.time()
     l = t = c = 0
-    q_loss_val = f_loss_val = 0.0
+    q_loss_val, f_loss_val, class_loss_val = 0.0, 0.0, 0.0
     olds = f_get_params(f_opt_state)
     while not is_eval:
         x_batch, y_batch = train_sampler.sample()
