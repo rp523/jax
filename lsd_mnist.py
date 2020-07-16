@@ -14,8 +14,8 @@ SEED = 0
 BATCH_SIZE = 100
 X_DIM = 28 * 28
 CLASS_NUM = 10
-Q_LR = 1E-4
-F_LR = 1E-4
+Q_LR = 1E-5
+F_LR = 1E-5
 LAMBDA = 10
 C = 5
 FOCAL_GAMMA = 2.0
@@ -86,9 +86,18 @@ def show_result(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sam
     plt.clf()
     fig = plt.figure(figsize=(15, 5))
     plot_points = 50
-    for i, (title, metrics, pos) in enumerate( [["softmax_score", pred_prob, 131],
-                                                ["logit_score", pred_logi, 132],
-                                                ["log_density", pred_dens, 133]]):
+
+    ax = fig.add_subplot(141)
+    plot_x = np.linspace(0,1,2)
+    ones = np.ones(plot_x.shape)
+    plt.fill_between(plot_x, 0.0 * ones, 0.1 * ones, facecolor = 'g', alpha=0.5)
+    plt.fill_between(plot_x, 0.1 * ones, ones      , facecolor = 'b', alpha=0.5)
+    plt.xlim(plot_x.min(), plot_x.max())
+    plt.title("ideal")
+
+    for i, (title, metrics, pos) in enumerate( [["softmax_score", pred_prob, 142],
+                                                ["logit_score", pred_logi, 143],
+                                                ["log_density", pred_dens, 144]]):
         ax = fig.add_subplot(pos)
         accuracy = np.zeros((plot_points,), dtype = np.float32)
         error = np.zeros((plot_points,), dtype = np.float32)
@@ -106,9 +115,11 @@ def show_result(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sam
         plt.fill_between(plot_metrics, zeros, error, facecolor = 'r', alpha=0.5)
         plt.fill_between(plot_metrics, error, error + unlearn, facecolor = 'g', alpha=0.5)
         plt.fill_between(plot_metrics, error + unlearn, ones, facecolor = 'b', alpha=0.5)
+        plt.xlim(plot_metrics.min(), plot_metrics.max())
         plt.title(title)
         if i == 0:
             plt.legend()
+    plt.savefig("unk_graphs.png")
     plt.show()
 
 def get_scale(sampler, sample_num, x_dim):
