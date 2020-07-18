@@ -12,7 +12,7 @@ from ebm.lsd import LSD_Learner
 from model.maker.model_maker import net_maker
 
 SEED = 0
-BATCH_SIZE = 1000
+BATCH_SIZE = 10000
 X_DIM = 28 * 28
 CLASS_NUM = 10
 Q_LR = 1E-3
@@ -199,7 +199,7 @@ def main(is_eval):
     _rng = jax.random.PRNGKey(SEED)
     
     _rng, rng_d, rng_q, rng_f = jax.random.split(_rng, 4)
-    train_sampler = Mnist(rng_d, BATCH_SIZE * (1 + 1 + C), "train", one_hot = True, dequantize = True, flatten = True)
+    train_sampler = Mnist(rng_d, BATCH_SIZE, "train", one_hot = True, dequantize = True, flatten = True)#, remove_classes=[0])
     test_sampler = Mnist(rng_d, 10000, "test", one_hot = False, dequantize = True, flatten = True)
     mu, sigma = get_scale(train_sampler, 1000, X_DIM)
     print("mu={}, sigma={}".format(mu, sigma))
@@ -215,19 +215,19 @@ def main(is_eval):
         return q_apply_fun_raw(q_params, x_batch)["log_density"]
     def classify_loss(q_params, x_batch, y_batch):
         y_pred = q_apply_fun_classify(q_params, x_batch)
-        cross_entropy = (- y_batch * ((1.0 - y_pred) ** FOCAL_GAMMA) * jnp.log(y_pred + 1E-10)).sum()
+        cross_entropy = (- y_batch * ((1.0 - y_pred) ** FOCAL_GAMMA) * jnp.log(y_pred + 1E-10)).sum(axis = -1).mean()
         return cross_entropy
     def accuracy(q_params, arg_test_sampler):
-        x_batch, y_batch = arg_test_sampler.sample()
-        x_batch = x_batch.reshape((x_batch.shape[0], -1))
+        x_batch, y_batch = arg_test_sampler.sample(get_all = True)
         pred_prob = q_apply_fun_classify(q_params, x_batch)
         pred_idx = jnp.argmax(pred_prob, axis = -1)
         return (y_batch == pred_idx).mean()
     def q_loss(q_params, f_params, x_batch, y_batch, rng):
+        loss = 0.0
         lsd, _ = LSD_Learner.calc_loss_metrics(q_params, f_params, x_batch, q_apply_fun_density, f_apply_fun, rng)
-        wd = 1E-5 * net_maker.weight_decay(q_params)
-        loss = lsd + wd
-        #loss += classify_loss(q_params, x_batch, x_batch)
+        loss += lsd
+        loss += 1E-5 * net_maker.weight_decay(q_params)
+        loss += classify_loss(q_params, x_batch, y_batch)
         return loss
     @jax.jit
     def q_update(t_cnt, q_opt_state, f_opt_state, x_batch, y_batch, rng):
@@ -238,6 +238,7 @@ def main(is_eval):
         return (t_cnt + 1), q_opt_state, loss_val
     @jax.jit
     def f_update(c_cnt, q_opt_state, f_opt_state, x_batch, rng):
+        loss_val = 0.0
         q_params = q_get_params(q_opt_state)
         f_params = f_get_params(f_opt_state)
         loss_val, grad_val = jax.value_and_grad(LSD_Learner.f_loss, argnums = 1)(q_params, f_params, x_batch, LAMBDA, q_apply_fun_density, f_apply_fun, rng)
@@ -277,7 +278,7 @@ def main(is_eval):
         if t1 - t0 > 20.0:
             print(  "{:.2f}epoch".format(cnt / (60000 / BATCH_SIZE)),
                     "{:.2f}sec".format(t1 - t0),
-                    #"{:.2f}%".format(accuracy(q_get_params(q_opt_state), test_sampler) * 100),
+                    "{:.2f}%".format(accuracy(q_get_params(q_opt_state), test_sampler) * 100),
                     "qx_loss={:.2f}".format(q_loss_val / (t - t_old)),
                     "fx_loss={:.2f}".format(-1 * f_loss_val / (c - c_old)),
                     ) 
