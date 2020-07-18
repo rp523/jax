@@ -10,6 +10,8 @@ import jax.experimental.optimizers as optimizers
 from dataset.mnist import Mnist
 from ebm.lsd import LSD_Learner
 from model.maker.model_maker import net_maker
+from sklearn.metrics import confusion_matrix
+import seaborn as sns
 
 SEED = 0
 BATCH_SIZE = 128
@@ -71,6 +73,21 @@ def jem(base_net, init_mu, init_sigma):
                 "class_prob" : jax.nn.softmax(log_q_xy),
                 "log_density" : log_q_x}
     return init_fun, apply_fun
+
+def make_conf_mat(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sampler):
+    q_params = arg_q_get_params(q_opt_state)
+    x, y_correct = arg_test_sampler.sample(get_all = True)
+    result = arg_q_apply_fun_raw(q_params, x)
+    y_pred = result["class_prob"].argmax(axis = -1)
+    # calc confusion matrix
+    cm = confusion_matrix(y_correct, y_pred, normalize = "true")
+
+    plt.clf()
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot(111, ylabel = "annotated", xlabel = "predicted")
+    sns.heatmap(cm, annot = True, cmap = "jet", fmt="1.4f", ax = ax,
+                square = True)
+    plt.savefig('conf_mat.png')
 
 def show_result(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sampler):
     q_params = arg_q_get_params(q_opt_state)
@@ -287,6 +304,8 @@ def main(is_eval):
             t0 = t1
             pickle.dump((q_get_params(q_opt_state), f_get_params(f_opt_state)), open(SAVE_PATH, "wb"))
 
+    make_conf_mat(q_opt_state, q_get_params, q_apply_fun_raw, test_sampler)
+    return
     show_result(q_opt_state, q_get_params, q_apply_fun_raw, test_sampler)
 
 if __name__ == "__main__":
