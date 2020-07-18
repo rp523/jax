@@ -69,6 +69,18 @@ def jem(base_net, init_mu, init_sigma):
         log_gauss = - ((inputs - mu) ** 2).sum(axis = -1) / (2 * sigma ** 2)
         log_gauss = log_gauss.reshape((log_q_x_base.shape[0], -1))
         log_q_x = log_q_x_base + log_gauss
+        '''
+        mu, log_sigma = params[-1]
+        mu = mu.reshape(tuple([1] + list(mu.shape)))
+        sigma = jnp.exp(log_sigma)
+        log_gauss = - ((inputs - mu) ** 2).sum(axis = -1) / (2 * sigma ** 2)
+        log_gauss = log_gauss.reshape((inputs.shape[0], -1))
+
+        base_params = params[:-1]
+        log_q_xy = base_apply_fun(base_params, inputs) + log_gauss
+        log_q_x_base = jax.scipy.special.logsumexp(log_q_xy, axis = 1).reshape((log_q_xy.shape[0], 1))
+        log_q_x = log_q_x_base
+        '''
         return {"class_logit" : log_q_xy,
                 "class_prob" : jax.nn.softmax(log_q_xy),
                 "log_density" : log_q_x}
@@ -105,9 +117,10 @@ def show_result(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sam
         for w in range(sample_w):
             rng, rng1 = jax.random.split(rng)
             x = jax.random.normal(rng1, (1, dim)) * sigma + mu
+            sc = 1
             def metric_func(x, q_params, idx):
-                ret = arg_q_apply_fun_raw(q_params, x)["log_density"]
-                #ret = arg_q_apply_fun_raw(q_params, x)["class_logit"].flatten()[idx]
+                #ret = arg_q_apply_fun_raw(q_params, x)["log_density"]
+                ret = arg_q_apply_fun_raw(q_params, x)["class_logit"].flatten()[idx]
                 assert(ret.size == 1)
                 return ret.sum()
             met = 9999999
@@ -121,17 +134,21 @@ def show_result(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sam
                 met = metric_func(x, q_params, h)
                 met_record[cnt] = float(met)
                 cnt = (cnt + 1) % record_num
+                sc += 1
                 print(
                     h,
                     w,
+                    sc,
                     met,
                     met_record.max() - met_record.min())
-                if (met_record.max() - met_record.min()) < 5E-3:
+                if (met_record.max() - met_record.min()) < 5E-0:
                     break
             x = Mnist.quantize(x.reshape((28, 28)))
             y = np.asarray(x).astype(np.uint8)
             all_arr[h * 28: (h + 1) * 28, w * 28 : (w + 1) * 28] = y
     pil = Image.fromarray(all_arr)
+    w, h = pil.size
+    pil = pil.resize((2*w, 2*h))
     pil.show()
     return
     '''
