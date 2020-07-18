@@ -1,23 +1,24 @@
 import os, time, pickle, argparse
+from PIL import Image
 import numpy as np
 from tqdm import tqdm
 from matplotlib import pyplot as plt
 import jax
 import jax.numpy as jnp
-from jax.experimental.stax import serial, Dense, elementwise, FanOut, FanInSum, parallel, Identity, Conv
+from jax.experimental.stax import serial, Dense, elementwise, FanOut, FanInSum, parallel, Identity, Conv, Tanh
 import jax.experimental.optimizers as optimizers
 from dataset.mnist import Mnist
 from ebm.lsd import LSD_Learner
 from model.maker.model_maker import net_maker
 
 SEED = 0
-BATCH_SIZE = 100
+BATCH_SIZE = 128
 X_DIM = 28 * 28
 CLASS_NUM = 10
-Q_LR = 1E-5
-F_LR = 1E-5
-LAMBDA = 10
-C = 5
+Q_LR = 1E-3
+F_LR = 1E-3
+LAMBDA = 0.5
+C = 10
 FOCAL_GAMMA = 2.0
 
 def Swish():
@@ -73,6 +74,71 @@ def jem(base_net, init_mu, init_sigma):
 
 def show_result(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sampler):
     q_params = arg_q_get_params(q_opt_state)
+
+    # sample data
+    mu, log_sigma = q_params[-1]
+    sigma = jnp.exp(log_sigma)
+    dim = mu.size
+    
+    sample_h = 1
+    sample_w = 3
+    all_arr = np.zeros((sample_h * 28, sample_w * 28), dtype = np.uint8)
+    rng = jax.random.PRNGKey(1)
+    for h in range(sample_h):
+        for w in range(sample_w):
+            rng, rng1 = jax.random.split(rng)
+            x = jax.random.normal(rng1, (1, dim)) * sigma + mu
+            def metric_func(x, q_params):
+                return arg_q_apply_fun_raw(q_params, x)["log_density"].sum()
+            met = 9999999
+            record_num = 100
+            met_record = np.ones(record_num) * met
+            cnt = 0
+            while True:
+                dfdx = jax.grad(metric_func)(x, q_params)
+                rng, rng1 = jax.random.split(rng)
+                x += 1E-0 * dfdx + 1E-2 * jax.random.uniform(rng1, x.shape)
+                met = metric_func(x, q_params)
+                met_record[cnt] = float(met)
+                cnt = (cnt + 1) % record_num
+                print(h, w, met_record.max() - met_record.min())
+                if (met_record.max() - met_record.min()) < 1E-2:
+                    break
+            x = Mnist.quantize(x.reshape((28, 28)))
+            y = np.asarray(x).astype(np.uint8)
+            all_arr[h * 28: (h + 1) * 28, w * 28 : (w + 1) * 28] = y
+    pil = Image.fromarray(all_arr)
+    pil.show()
+    return
+    '''
+    q = np.ones((sample_num, dim)) * (-999999)
+    not_update_cnt = 0
+    while not_update_cnt < 10000:
+        rng, rng1 = jax.random.split(rng)
+        x1 = np.asarray(jax.random.uniform(rng1, (sample_num, dim)) * sigma + mu)
+        q1 = np.asarray(arg_q_apply_fun_raw(q_params, x1)["log_density"])
+        q1 = q1.flatten()
+        next_idx = np.argsort(q1)
+        x1 = x1[next_idx]
+        q = q[next_idx]
+
+        q_min = q.min()
+        update_indexes = q1 > q_min
+        if update_indexes.any():
+            updates = q1[update_indexes]
+            q = np.append(updates, q[updates.size:])
+            x = np.append(x1[:updates.size], x[updates.size:], axis = 0)
+            q = np.asarray(arg_q_apply_fun_raw(q_params, x)["log_density"]).flatten()
+            next_idx = np.argsort(q)
+            x = x[next_idx]
+            q = q[next_idx]
+            not_update_cnt = 0
+        else:
+            not_update_cnt += 1
+        print(q.min(), q.max())
+    '''
+
+    # visualize classify graph
     test_x, test_lbls = arg_test_sampler.sample(get_all = True)
     result_dict = arg_q_apply_fun_raw(q_params, test_x)
     pred_lbls = result_dict["class_prob"].argmax(axis = -1)
@@ -133,7 +199,7 @@ def main(is_eval):
     _rng = jax.random.PRNGKey(SEED)
     
     _rng, rng_d, rng_q, rng_f = jax.random.split(_rng, 4)
-    train_sampler = Mnist(rng_d, BATCH_SIZE * (1 + 1 + C), "train", one_hot = True, dequantize = True, flatten = True)
+    train_sampler = Mnist(rng_d, BATCH_SIZE, "train", one_hot = True, dequantize = True, flatten = True)#, remove_classes=[0])
     test_sampler = Mnist(rng_d, 10000, "test", one_hot = False, dequantize = True, flatten = True)
     mu, sigma = get_scale(train_sampler, 1000, X_DIM)
     print("mu={}, sigma={}".format(mu, sigma))
@@ -149,49 +215,35 @@ def main(is_eval):
         return q_apply_fun_raw(q_params, x_batch)["log_density"]
     def classify_loss(q_params, x_batch, y_batch):
         y_pred = q_apply_fun_classify(q_params, x_batch)
-        cross_entropy = (- y_batch * ((1.0 - y_pred) ** FOCAL_GAMMA) * jnp.log(y_pred + 1E-10)).sum()
-        weight_loss = net_maker.weight_decay(q_params)
-        return (cross_entropy + 1E-5 * weight_loss)
-    def classify_update(l_cnt, q_opt_state, x_batch, y_batch):
-        q_params = q_get_params(q_opt_state)
-        loss_val, grad_val = jax.value_and_grad(classify_loss)(q_params, x_batch, y_batch)
-        q_opt_state = q_opt_update(l_cnt, grad_val, q_opt_state)
-        return q_opt_state, loss_val
+        cross_entropy = (- y_batch * ((1.0 - y_pred) ** FOCAL_GAMMA) * jnp.log(y_pred + 1E-10)).sum(axis = -1).mean()
+        return cross_entropy
     def accuracy(q_params, arg_test_sampler):
-        x_batch, y_batch = arg_test_sampler.sample()
-        x_batch = x_batch.reshape((x_batch.shape[0], -1))
+        x_batch, y_batch = arg_test_sampler.sample(get_all = True)
         pred_prob = q_apply_fun_classify(q_params, x_batch)
         pred_idx = jnp.argmax(pred_prob, axis = -1)
         return (y_batch == pred_idx).mean()
-
+    def q_loss(q_params, f_params, x_batch, y_batch, rng):
+        loss = 0.0
+        lsd, _ = LSD_Learner.calc_loss_metrics(q_params, f_params, x_batch, q_apply_fun_density, f_apply_fun, rng)
+        loss += lsd
+        loss += 1E-5 * net_maker.weight_decay(q_params)
+        loss += classify_loss(q_params, x_batch, y_batch)
+        return loss
     @jax.jit
-    def update( l_cnt, t_cnt, c_cnt,
-                q_opt_state, f_opt_state, x_batch, y_batch,
-                rng):
-        q_loss_val, f_loss_val, class_loss_val = 0.0, 0.0, 0.0
-        idx = 0
-        rngs = jax.random.split(rng, (1 + 1 + C))
-        
-        # learn classifier
-        q_opt_state, class_loss_val = classify_update(  l_cnt, q_opt_state,
-                                                        x_batch[idx * BATCH_SIZE : (idx+1) * BATCH_SIZE],
-                                                        y_batch[idx * BATCH_SIZE : (idx+1) * BATCH_SIZE])
-        idx, l_cnt = idx + 1, l_cnt + 1
-
-        if True:
-            # learn density
-            q_opt_state, q_loss_val = LSD_Learner.q_update(t_cnt, q_opt_state, f_opt_state, x_batch[idx * BATCH_SIZE : (idx+1) * BATCH_SIZE],
-                                                    q_apply_fun_density, f_apply_fun, q_get_params, f_get_params, q_opt_update, rngs[idx])
-            idx, t_cnt = idx + 1, t_cnt + 1
-
-            # learn cirtic
-            for _ in range(C):
-                f_opt_state, f_loss_val = LSD_Learner.f_update( c_cnt, q_opt_state, f_opt_state, x_batch[idx * BATCH_SIZE : (idx+1) * BATCH_SIZE], LAMBDA,
-                                                    q_apply_fun_density, f_apply_fun, q_get_params, f_get_params, f_opt_update, rngs[idx])
-                idx, c_cnt = idx + 1, c_cnt + 1
-        
-        return l_cnt, t_cnt, c_cnt, q_opt_state, f_opt_state, q_loss_val, f_loss_val, class_loss_val
-
+    def q_update(t_cnt, q_opt_state, f_opt_state, x_batch, y_batch, rng):
+        q_params = q_get_params(q_opt_state)
+        f_params = f_get_params(f_opt_state)
+        loss_val, grad_val = jax.value_and_grad(q_loss)(q_params, f_params, x_batch, y_batch, rng)
+        q_opt_state = q_opt_update(t_cnt, grad_val, q_opt_state)
+        return (t_cnt + 1), q_opt_state, loss_val
+    @jax.jit
+    def f_update(c_cnt, q_opt_state, f_opt_state, x_batch, rng):
+        loss_val = 0.0
+        q_params = q_get_params(q_opt_state)
+        f_params = f_get_params(f_opt_state)
+        loss_val, grad_val = jax.value_and_grad(LSD_Learner.f_loss, argnums = 1)(q_params, f_params, x_batch, LAMBDA, q_apply_fun_density, f_apply_fun, rng)
+        f_opt_state = f_opt_update(c_cnt, grad_val, f_opt_state)
+        return (c_cnt + 1), f_opt_state, loss_val
     SAVE_PATH = r"params.bin"
     if not os.path.exists(SAVE_PATH):
         _, q_init_params = q_init_fun(rng_q, (BATCH_SIZE, X_DIM))
@@ -203,28 +255,35 @@ def main(is_eval):
     f_opt_state = f_opt_init(f_init_params)
 
     t0 = time.time()
-    l = t = c = 0
-    q_loss_val, f_loss_val, class_loss_val = 0.0, 0.0, 0.0
-    olds = f_get_params(f_opt_state)
+    t = c = 0
+    t_old = c_old = 0
+    q_loss_val, f_loss_val = 0.0, 0.0
+    
+    cnt = 0
     while not is_eval:
+        # learning
         x_batch, y_batch = train_sampler.sample()
-
         rng1, _rng = jax.random.split(_rng)
-        l, t, c, q_opt_state, f_opt_state, q_loss_val, f_loss_val, class_loss_val \
-            = update(l, t, c, q_opt_state, f_opt_state, x_batch, y_batch, rng1)
+        if cnt % C == 0:
+            # joint model
+            t, q_opt_state, q_loss_val1 = q_update(t, q_opt_state, f_opt_state, x_batch, y_batch, rng1)
+            q_loss_val += q_loss_val1
+        else:
+            # cirtic
+            c, f_opt_state, f_loss_val1 = f_update(c, q_opt_state, f_opt_state, x_batch, rng1)
+            f_loss_val += f_loss_val1
+        cnt += 1
 
         t1 = time.time()
-        if t1 - t0 > 10.0:
-            news = f_get_params(f_opt_state)
-            print(  "{:.2f}epoch".format(l / (60000 / BATCH_SIZE)),
+        if t1 - t0 > 20.0:
+            print(  "{:.2f}epoch".format(cnt / (60000 / BATCH_SIZE)),
                     "{:.2f}sec".format(t1 - t0),
                     "{:.2f}%".format(accuracy(q_get_params(q_opt_state), test_sampler) * 100),
-                    "qx_loss={:.2f}".format(q_loss_val),
-                    "fx_loss={:.2f}".format(-1 * f_loss_val),
-                    "qyx_loss={:.2f}".format(class_loss_val),
-                    #net_maker.param_l2_norm(olds, news),
+                    "qx_loss={:.2f}".format(q_loss_val / (t - t_old)),
+                    "fx_loss={:.2f}".format(-1 * f_loss_val / (c - c_old)),
                     ) 
-            olds = news
+            q_loss_val, f_loss_val = 0.0, 0.0
+            t_old, c_old =  t, c
             t0 = t1
             pickle.dump((q_get_params(q_opt_state), f_get_params(f_opt_state)), open(SAVE_PATH, "wb"))
 
@@ -234,5 +293,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--eval", "-e", action = "store_true")
     arg = parser.parse_args()
+    #arg.eval = True
     main(arg.eval)
     print("Done.")
