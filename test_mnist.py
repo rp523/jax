@@ -2,16 +2,18 @@
 import time
 import jax
 import jax.numpy as jnp
-from jax.experimental.stax import Dense, serial, parallel, Relu, Softmax, Tanh, Identity, FanInSum, FanOut, Sigmoid
+from jax.experimental.stax import Dense, serial, parallel, Relu, Softmax, Tanh, Identity, FanInSum, FanOut, Sigmoid, elementwise
 from jax.experimental.optimizers import adam
 from model.maker.model_maker import net_maker
 from dataset.mnist import Mnist
 
-BATCH_SIZE = int(2 ** 13)
-LR = 1E-3
+BATCH_SIZE = 128
+LR = 1E-4
 DATA_DIM = 28 * 28
 CLASS_NUM = 10
 INPUT_SHAPE = (BATCH_SIZE, DATA_DIM )
+FOCAL_GAMMA = 2.0
+
 def Swish():
     def init_fun(rng, input_shape):
         beta_shape = tuple(input_shape[1:])
@@ -29,10 +31,9 @@ def Swish():
 def SkipDense(unit_num):
     return serial(FanOut(2), parallel(Dense(unit_num), Identity), FanInSum)
 def MyNet():
-    return serial(  Dense(300), Sigmoid,
-                    SkipDense(300), Sigmoid,
-                    SkipDense(300), Sigmoid,
-                    SkipDense(300), Sigmoid,
+    return serial(  Dense(300), Swish(),
+                    Dense(300), Swish(),
+                    Dense(300), Swish(),
                     Dense(CLASS_NUM), Softmax,
             )
 
@@ -57,10 +58,10 @@ def main():
         assert(y_pred.shape == (BATCH_SIZE, CLASS_NUM))
         #assert(y_pred.min() >= 0.0)
         #assert(y_pred.max() <= 1.0)
-        cross_ent = -(arg_y * jnp.log(y_pred + 1E-10)).sum(axis = -1).mean()
-        cross_ent = ((y_pred - arg_y) ** 2).sum(axis = -1).mean()
-        wd = 1E-3 * net_maker.weight_decay(q_params)
-        return (cross_ent + wd)
+        cross_entropy = (- arg_y * ((1.0 - y_pred) ** FOCAL_GAMMA) * jnp.log(y_pred + 1E-10)).sum(axis = -1).mean()
+        #cross_ent = ((y_pred - arg_y) ** 2).sum(axis = -1).mean()
+        wd = 1E-1 * net_maker.weight_decay(q_params)
+        return (cross_entropy + wd)
     @jax.jit
     def update(arg_t, arg_q_opt_state, arg_x, arg_y):
         q_params = q_get_params(arg_q_opt_state)

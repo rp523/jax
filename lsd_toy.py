@@ -1,7 +1,7 @@
 import os, time, pickle
 from matplotlib import pyplot as plt
 import jax
-from jax.experimental.stax import serial, Dense, elementwise, FanOut, FanInSum, parallel, Identity
+from jax.experimental.stax import serial, Dense, elementwise, FanOut, FanInSum, parallel, Identity, Tanh
 import jax.experimental.optimizers as optimizers
 import jax.numpy as jnp
 from ebm.toy_sampler import Sampler
@@ -9,12 +9,12 @@ from ebm.lsd import LSD_Learner
 from model.maker.model_maker import net_maker
 
 SEED = 0
-BATCH_SIZE = 100
+BATCH_SIZE = 128
 X_DIM = 2
 HALF_BAND = 5.0
 LR = 1E-4
 LAMBDA = 10
-C = 5
+C = 10
 bin_num = 100
 
 def Swish():
@@ -110,10 +110,9 @@ def main():
         idx += 1
         t_cnt += 1
         for _ in range(C):
-            f_opt_state, f_loss_val = LSD_Learner.f_update( c_cnt, q_opt_state, f_opt_state, x_batch[idx * BATCH_SIZE : (idx+1) * BATCH_SIZE], LAMBDA,
+            c_cnt, f_opt_state, f_loss_val = LSD_Learner.f_update( c_cnt, q_opt_state, f_opt_state, x_batch[idx * BATCH_SIZE : (idx+1) * BATCH_SIZE], LAMBDA,
                                                 q_apply_fun, f_apply_fun, q_get_params, f_get_params, f_opt_update, rngs[idx])
             idx += 1
-            c_cnt += 1
         return t_cnt, c_cnt, q_opt_state, f_opt_state, q_loss_val, f_loss_val, rngs[idx]
 
     SAVE_PATH = r"params.bin"
@@ -146,7 +145,7 @@ def main():
             = update(t, c, q_opt_state, f_opt_state, x_batch, _rng)
 
         t1 = time.time()
-        if t1 - t0 > 10.0:
+        if t1 - t0 > 20.0:
             news = f_get_params(f_opt_state)
             print(t, "{:.2f}".format(t1 - t0), q_loss_val, -1 * f_loss_val,
                     net_maker.param_l2_norm(olds, news))

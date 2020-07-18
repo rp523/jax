@@ -5,14 +5,14 @@ from tqdm import tqdm
 from matplotlib import pyplot as plt
 import jax
 import jax.numpy as jnp
-from jax.experimental.stax import serial, Dense, elementwise, FanOut, FanInSum, parallel, Identity, Conv
+from jax.experimental.stax import serial, Dense, elementwise, FanOut, FanInSum, parallel, Identity, Conv, Tanh
 import jax.experimental.optimizers as optimizers
 from dataset.mnist import Mnist
 from ebm.lsd import LSD_Learner
 from model.maker.model_maker import net_maker
 
 SEED = 0
-BATCH_SIZE = 10000
+BATCH_SIZE = 128
 X_DIM = 28 * 28
 CLASS_NUM = 10
 Q_LR = 1E-3
