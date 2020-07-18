@@ -10,6 +10,8 @@ import jax.experimental.optimizers as optimizers
 from dataset.mnist import Mnist
 from ebm.lsd import LSD_Learner
 from model.maker.model_maker import net_maker
+from sklearn.metrics import confusion_matrix
+import seaborn as sns
 
 SEED = 0
 BATCH_SIZE = 128
@@ -67,10 +69,37 @@ def jem(base_net, init_mu, init_sigma):
         log_gauss = - ((inputs - mu) ** 2).sum(axis = -1) / (2 * sigma ** 2)
         log_gauss = log_gauss.reshape((log_q_x_base.shape[0], -1))
         log_q_x = log_q_x_base + log_gauss
+        '''
+        mu, log_sigma = params[-1]
+        mu = mu.reshape(tuple([1] + list(mu.shape)))
+        sigma = jnp.exp(log_sigma)
+        log_gauss = - ((inputs - mu) ** 2).sum(axis = -1) / (2 * sigma ** 2)
+        log_gauss = log_gauss.reshape((inputs.shape[0], -1))
+
+        base_params = params[:-1]
+        log_q_xy = base_apply_fun(base_params, inputs) + log_gauss
+        log_q_x_base = jax.scipy.special.logsumexp(log_q_xy, axis = 1).reshape((log_q_xy.shape[0], 1))
+        log_q_x = log_q_x_base
+        '''
         return {"class_logit" : log_q_xy,
                 "class_prob" : jax.nn.softmax(log_q_xy),
                 "log_density" : log_q_x}
     return init_fun, apply_fun
+
+def make_conf_mat(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sampler):
+    q_params = arg_q_get_params(q_opt_state)
+    x, y_correct = arg_test_sampler.sample(get_all = True)
+    result = arg_q_apply_fun_raw(q_params, x)
+    y_pred = result["class_prob"].argmax(axis = -1)
+    # calc confusion matrix
+    cm = confusion_matrix(y_correct, y_pred, normalize = "true")
+
+    plt.clf()
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot(111, ylabel = "annotated", xlabel = "predicted")
+    sns.heatmap(cm, annot = True, cmap = "jet", fmt="1.4f", ax = ax,
+                square = True)
+    plt.savefig('conf_mat.png')
 
 def show_result(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sampler):
     q_params = arg_q_get_params(q_opt_state)
@@ -81,33 +110,45 @@ def show_result(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sam
     dim = mu.size
     
     sample_h = 1
-    sample_w = 3
+    sample_w = CLASS_NUM
     all_arr = np.zeros((sample_h * 28, sample_w * 28), dtype = np.uint8)
     rng = jax.random.PRNGKey(1)
     for h in range(sample_h):
         for w in range(sample_w):
             rng, rng1 = jax.random.split(rng)
             x = jax.random.normal(rng1, (1, dim)) * sigma + mu
-            def metric_func(x, q_params):
-                return arg_q_apply_fun_raw(q_params, x)["log_density"].sum()
+            sc = 1
+            def metric_func(x, q_params, idx):
+                #ret = arg_q_apply_fun_raw(q_params, x)["log_density"]
+                ret = arg_q_apply_fun_raw(q_params, x)["class_logit"].flatten()[idx]
+                assert(ret.size == 1)
+                return ret.sum()
             met = 9999999
             record_num = 100
             met_record = np.ones(record_num) * met
             cnt = 0
             while True:
-                dfdx = jax.grad(metric_func)(x, q_params)
+                dfdx = jax.grad(metric_func)(x, q_params, h)
                 rng, rng1 = jax.random.split(rng)
                 x += 1E-0 * dfdx + 1E-2 * jax.random.uniform(rng1, x.shape)
-                met = metric_func(x, q_params)
+                met = metric_func(x, q_params, h)
                 met_record[cnt] = float(met)
                 cnt = (cnt + 1) % record_num
-                print(h, w, met_record.max() - met_record.min())
-                if (met_record.max() - met_record.min()) < 1E-2:
+                sc += 1
+                print(
+                    h,
+                    w,
+                    sc,
+                    met,
+                    met_record.max() - met_record.min())
+                if (met_record.max() - met_record.min()) < 5E-0:
                     break
             x = Mnist.quantize(x.reshape((28, 28)))
             y = np.asarray(x).astype(np.uint8)
             all_arr[h * 28: (h + 1) * 28, w * 28 : (w + 1) * 28] = y
     pil = Image.fromarray(all_arr)
+    w, h = pil.size
+    pil = pil.resize((2*w, 2*h))
     pil.show()
     return
     '''
@@ -288,6 +329,8 @@ def main(is_eval):
             pickle.dump((q_get_params(q_opt_state), f_get_params(f_opt_state)), open(SAVE_PATH, "wb"))
 
     show_result(q_opt_state, q_get_params, q_apply_fun_raw, test_sampler)
+    return
+    make_conf_mat(q_opt_state, q_get_params, q_apply_fun_raw, test_sampler)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
