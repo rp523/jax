@@ -98,28 +98,35 @@ def show_result(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sam
     dim = mu.size
     
     sample_h = 1
-    sample_w = 3
+    sample_w = CLASS_NUM
     all_arr = np.zeros((sample_h * 28, sample_w * 28), dtype = np.uint8)
     rng = jax.random.PRNGKey(1)
     for h in range(sample_h):
         for w in range(sample_w):
             rng, rng1 = jax.random.split(rng)
             x = jax.random.normal(rng1, (1, dim)) * sigma + mu
-            def metric_func(x, q_params):
-                return arg_q_apply_fun_raw(q_params, x)["log_density"].sum()
+            def metric_func(x, q_params, idx):
+                ret = arg_q_apply_fun_raw(q_params, x)["log_density"]
+                #ret = arg_q_apply_fun_raw(q_params, x)["class_logit"].flatten()[idx]
+                assert(ret.size == 1)
+                return ret.sum()
             met = 9999999
             record_num = 100
             met_record = np.ones(record_num) * met
             cnt = 0
             while True:
-                dfdx = jax.grad(metric_func)(x, q_params)
+                dfdx = jax.grad(metric_func)(x, q_params, h)
                 rng, rng1 = jax.random.split(rng)
                 x += 1E-0 * dfdx + 1E-2 * jax.random.uniform(rng1, x.shape)
-                met = metric_func(x, q_params)
+                met = metric_func(x, q_params, h)
                 met_record[cnt] = float(met)
                 cnt = (cnt + 1) % record_num
-                print(h, w, met_record.max() - met_record.min())
-                if (met_record.max() - met_record.min()) < 1E-2:
+                print(
+                    h,
+                    w,
+                    met,
+                    met_record.max() - met_record.min())
+                if (met_record.max() - met_record.min()) < 5E-3:
                     break
             x = Mnist.quantize(x.reshape((28, 28)))
             y = np.asarray(x).astype(np.uint8)
@@ -304,9 +311,9 @@ def main(is_eval):
             t0 = t1
             pickle.dump((q_get_params(q_opt_state), f_get_params(f_opt_state)), open(SAVE_PATH, "wb"))
 
-    make_conf_mat(q_opt_state, q_get_params, q_apply_fun_raw, test_sampler)
-    return
     show_result(q_opt_state, q_get_params, q_apply_fun_raw, test_sampler)
+    return
+    make_conf_mat(q_opt_state, q_get_params, q_apply_fun_raw, test_sampler)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
