@@ -66,6 +66,7 @@ def jem(base_net, init_mu, init_sigma):
         params = list(base_params) + [(init_mu, init_log_sigma)]
         return None, params
     def apply_fun(params, inputs, **kwargs):
+        '''
         base_params = params[:-1]
         log_q_xy = base_apply_fun(base_params, inputs)
         log_q_x_base = jax.scipy.special.logsumexp(log_q_xy, axis = 1).reshape((log_q_xy.shape[0], 1))
@@ -81,14 +82,14 @@ def jem(base_net, init_mu, init_sigma):
         mu, log_sigma = params[-1]
         mu = mu.reshape(tuple([1] + list(mu.shape)))
         sigma = jnp.exp(log_sigma)
-        log_gauss = - ((inputs - mu) ** 2).sum(axis = -1) / (2 * sigma ** 2)
+        log_gauss = - ((inputs - mu) ** 2) / (2 * sigma ** 2)
+        log_gauss = log_gauss.sum(axis = -1)
         log_gauss = log_gauss.reshape((inputs.shape[0], -1))
 
         base_params = params[:-1]
         log_q_xy = base_apply_fun(base_params, inputs) + log_gauss
         log_q_x_base = jax.scipy.special.logsumexp(log_q_xy, axis = 1).reshape((log_q_xy.shape[0], 1))
         log_q_x = log_q_x_base
-        '''
         return {"class_logit" : log_q_xy,
                 "class_prob" : jax.nn.softmax(log_q_xy),
                 "log_density" : log_q_x}
@@ -117,7 +118,7 @@ def show_sample(class_num, q_opt_state, arg_q_get_params, arg_q_apply_fun_raw):
     sigma = jnp.exp(log_sigma)
     dim = mu.size
     
-    sample_h = 1
+    sample_h = class_num 
     sample_w = 3
     all_arr = np.zeros((sample_h * 28, sample_w * 28), dtype = np.uint8)
     rng = jax.random.PRNGKey(1)
@@ -127,8 +128,9 @@ def show_sample(class_num, q_opt_state, arg_q_get_params, arg_q_apply_fun_raw):
             x = jax.random.normal(rng1, (1, dim)) * sigma + mu
             sc = 1
             def metric_func(x, q_params, idx):
-                ret = arg_q_apply_fun_raw(q_params, x)["log_density"]
-                #ret = arg_q_apply_fun_raw(q_params, x)["class_logit"].flatten()[idx]
+                #ret = arg_q_apply_fun_raw(q_params, x)["log_density"]
+                #assert(arg_q_apply_fun_raw(q_params, x)["class_logit"].size == class_num)
+                ret = arg_q_apply_fun_raw(q_params, x)["class_logit"].flatten()[idx]
                 assert(ret.size == 1)
                 return ret.sum()
             met = 9999999
@@ -154,6 +156,12 @@ def show_sample(class_num, q_opt_state, arg_q_get_params, arg_q_apply_fun_raw):
                         "{:.3f}".format(met_record.max() - met_record.min()))
                     t0 = t1
                 if (met_record.max() - met_record.min()) < 1E-2:
+                    print(
+                        h,
+                        w,
+                        sc,
+                        "{:.3f}".format(met),
+                        "{:.3f}".format(met_record.max() - met_record.min()))
                     break
             x = Mnist.quantize(x.reshape((28, 28)))
             y = np.asarray(x).astype(np.uint8)
@@ -288,7 +296,7 @@ def main(is_eval, class_num):
         lsd, _ = LSD_Learner.calc_loss_metrics(q_params, f_params, x_batch, q_apply_fun_density, f_apply_fun, rng)
         loss += lsd
         loss += 1E-5 * net_maker.weight_decay(q_params)
-        loss += classify_loss(q_params, x_batch, y_batch)
+        loss += 1E-1 * classify_loss(q_params, x_batch, y_batch)
         return loss
     @jax.jit
     def q_update(t_cnt, q_opt_state, f_opt_state, x_batch, y_batch, rng):

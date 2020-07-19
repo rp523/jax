@@ -62,7 +62,7 @@ class LSD_Learner:
         q_opt_state = arg_q_opt_update(t_cnt, grad_val, q_opt_state)
         return q_opt_state, loss_val
 
-    @jax.jit
+    @staticmethod
     def f_update(c_cnt, q_opt_state, f_opt_state, x_batch, l2_weight,
                     arg_q_apply_fun, arg_f_apply_fun, arg_q_get_params, arg_f_get_params, arg_f_opt_update, rng):
         q_params = arg_q_get_params(q_opt_state)

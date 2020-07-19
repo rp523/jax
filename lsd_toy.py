@@ -9,12 +9,12 @@ from ebm.lsd import LSD_Learner
 from model.maker.model_maker import net_maker
 
 SEED = 0
-BATCH_SIZE = 128
+BATCH_SIZE = 100
 X_DIM = 2
 HALF_BAND = 5.0
 LR = 1E-4
 LAMBDA = 10
-C = 10
+C = 5
 bin_num = 100
 
 def Swish():
@@ -147,8 +147,12 @@ def main():
         t1 = time.time()
         if t1 - t0 > 20.0:
             news = f_get_params(f_opt_state)
-            print(t, "{:.2f}".format(t1 - t0), q_loss_val, -1 * f_loss_val,
-                    net_maker.param_l2_norm(olds, news))
+            print(  t,
+                    "{:.2f}".format(t1 - t0),
+                    "{:.6f}".format(q_loss_val),
+                    "{:.6f}".format(-f_loss_val),
+                    #net_maker.param_l2_norm(olds, news),
+                    )
             olds = news
             t0 = t1
             save_map(   q_apply_fun, q_get_params(q_opt_state),
