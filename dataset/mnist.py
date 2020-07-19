@@ -7,10 +7,11 @@ import jax
 import jax.numpy as jnp
 
 class Mnist:
-    def __init__(self, rng, batch_size, data_type, one_hot, dequantize, flatten, remove_classes = None):
+    def __init__(self, rng, batch_size, data_type, one_hot, dequantize, flatten, remove_classes = None, class_num = 10):
         self.__batch_size = batch_size
         self.__rng = rng
         self.__data_type = data_type
+        self.__class_num = class_num
 
         url_base = "http://yann.lecun.com/exdb/mnist/"
         self.__key_file = {
@@ -46,8 +47,8 @@ class Mnist:
                 self.__all_data[key] = data
 
         if isinstance(remove_classes, list):
-            for img_key, lbl_key in [["train_img", "train_label"],
-                                     ["test_img", "test_label"]]:
+            for img_key, lbl_key in    [["train_img", "train_label"],
+                                        ["test_img", "test_label"]]:
                 for remove_val in remove_classes:
                     is_remain = (self.__all_data[lbl_key] != remove_val)
                     self.__all_data[lbl_key] = self.__all_data[lbl_key][is_remain]
@@ -56,10 +57,13 @@ class Mnist:
         if one_hot:
             for lbl_key in ["train_label", "test_label"]:
                 self.__all_data[lbl_key] = jnp.eye(10)[self.__all_data[lbl_key]]
-
+                if isinstance(remove_classes, list):
+                    if len(remove_classes) == 10 - class_num:
+                        for remove_val in np.sort(np.asarray(remove_classes))[::-1]:
+                            self.__all_data[lbl_key] = np.delete(self.__all_data[lbl_key], obj = remove_val, axis = 1)
     def test_visualize(self):
         count = {}
-        labels = np.arange(10)
+        labels = np.arange(self.__class_num)
         for label in labels:
             count[int(label)] = 0
         for img_key, label_key in [ ["train_img", "train_label"],

@@ -16,7 +16,6 @@ import seaborn as sns
 SEED = 0
 BATCH_SIZE = 128
 X_DIM = 28 * 28
-CLASS_NUM = 10
 Q_LR = 1E-3
 F_LR = 1E-3
 LAMBDA = 0.5
@@ -101,7 +100,7 @@ def make_conf_mat(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_s
                 square = True)
     plt.savefig('conf_mat.png')
 
-def show_result(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sampler):
+def show_sample(class_num, q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sampler):
     q_params = arg_q_get_params(q_opt_state)
 
     # sample data
@@ -110,7 +109,7 @@ def show_result(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sam
     dim = mu.size
     
     sample_h = 1
-    sample_w = CLASS_NUM
+    sample_w = 3
     all_arr = np.zeros((sample_h * 28, sample_w * 28), dtype = np.uint8)
     rng = jax.random.PRNGKey(1)
     for h in range(sample_h):
@@ -119,14 +118,15 @@ def show_result(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sam
             x = jax.random.normal(rng1, (1, dim)) * sigma + mu
             sc = 1
             def metric_func(x, q_params, idx):
-                #ret = arg_q_apply_fun_raw(q_params, x)["log_density"]
-                ret = arg_q_apply_fun_raw(q_params, x)["class_logit"].flatten()[idx]
+                ret = arg_q_apply_fun_raw(q_params, x)["log_density"]
+                #ret = arg_q_apply_fun_raw(q_params, x)["class_logit"].flatten()[idx]
                 assert(ret.size == 1)
                 return ret.sum()
             met = 9999999
             record_num = 100
             met_record = np.ones(record_num) * met
             cnt = 0
+            t0 = time.time()
             while True:
                 dfdx = jax.grad(metric_func)(x, q_params, h)
                 rng, rng1 = jax.random.split(rng)
@@ -135,13 +135,16 @@ def show_result(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sam
                 met_record[cnt] = float(met)
                 cnt = (cnt + 1) % record_num
                 sc += 1
-                print(
-                    h,
-                    w,
-                    sc,
-                    met,
-                    met_record.max() - met_record.min())
-                if (met_record.max() - met_record.min()) < 5E-0:
+                t1 = time.time()
+                if t1 - t0 > 10:
+                    print(
+                        h,
+                        w,
+                        sc,
+                        "{:.3f}".format(met),
+                        "{:.3f}".format(met_record.max() - met_record.min()))
+                    t0 = t1
+                if (met_record.max() - met_record.min()) < 1E-2:
                     break
             x = Mnist.quantize(x.reshape((28, 28)))
             y = np.asarray(x).astype(np.uint8)
@@ -150,82 +153,97 @@ def show_result(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sam
     w, h = pil.size
     pil = pil.resize((2*w, 2*h))
     pil.show()
-    return
-    '''
-    q = np.ones((sample_num, dim)) * (-999999)
-    not_update_cnt = 0
-    while not_update_cnt < 10000:
-        rng, rng1 = jax.random.split(rng)
-        x1 = np.asarray(jax.random.uniform(rng1, (sample_num, dim)) * sigma + mu)
-        q1 = np.asarray(arg_q_apply_fun_raw(q_params, x1)["log_density"])
-        q1 = q1.flatten()
-        next_idx = np.argsort(q1)
-        x1 = x1[next_idx]
-        q = q[next_idx]
 
-        q_min = q.min()
-        update_indexes = q1 > q_min
-        if update_indexes.any():
-            updates = q1[update_indexes]
-            q = np.append(updates, q[updates.size:])
-            x = np.append(x1[:updates.size], x[updates.size:], axis = 0)
-            q = np.asarray(arg_q_apply_fun_raw(q_params, x)["log_density"]).flatten()
-            next_idx = np.argsort(q)
-            x = x[next_idx]
-            q = q[next_idx]
-            not_update_cnt = 0
-        else:
-            not_update_cnt += 1
-        print(q.min(), q.max())
-    '''
-
-    # visualize classify graph
-    test_x, test_lbls = arg_test_sampler.sample(get_all = True)
-    result_dict = arg_q_apply_fun_raw(q_params, test_x)
-    pred_lbls = result_dict["class_prob"].argmax(axis = -1)
-    pred_prob = result_dict["class_prob"].max(axis = -1)
-    pred_logi = result_dict["class_logit"].max(axis = -1)
-    pred_dens = result_dict["log_density"].flatten()
-
-    correct = (pred_lbls == test_lbls)
-    incorrect = (pred_lbls != test_lbls)
-
+def show_graph():
     plt.clf()
-    fig = plt.figure(figsize=(15, 5))
     plot_points = 50
 
-    ax = fig.add_subplot(141)
-    plot_x = np.linspace(0,1,2)
-    ones = np.ones(plot_x.shape)
-    plt.fill_between(plot_x, 0.0 * ones, 0.1 * ones, facecolor = 'g', alpha=0.5)
-    plt.fill_between(plot_x, 0.1 * ones, ones      , facecolor = 'b', alpha=0.5)
-    plt.xlim(plot_x.min(), plot_x.max())
-    plt.title("ideal")
+    colors = ["blue", "blue", "red", "red", "purple"]
+    linestyles = ["solid", "dashed", "solid", "dashed", "dashed"]
+    titles = [  "softmax",
+                "logit",
+                "尤度モデルsoftmax",
+                "尤度モデルlogit",
+                "尤度モデルdensity",
+                ]
+    keys = ["class_prob",
+            "class_logit",
+            "class_prob",
+            "class_logit",
+            "log_density",
+            ]
+    for j, model_class_num in enumerate([9]):
+        if j == 0:
+            #paths = ["exp/05_class_allclass"] * 2 + ["exp/03_joint_allclasses"] * 3
+            paths = ["exp/05_class_non0"] * 2 + ["exp/04_joint_non0"] * 3
+            paths = ["exp/08_class_non0train"] * 2 + ["exp/07_joint_non0train"] * 3
+        rng = jax.random.PRNGKey(0)
+        test_sampler = Mnist(rng, 10000, "test", one_hot = False, dequantize = True, flatten = True)
+            
+        for i, (xlabel, key, weight_path) in enumerate(zip(titles, keys, paths)):
+            dummy = 0.0
+            _, q_apply_fun_raw = jem(mlp(model_class_num), dummy, dummy)
+            q_params, _ = pickle.load(open(os.path.join(weight_path, "params.bin"), "rb"))
+            x, y = test_sampler.sample(get_all = True)
+            pred = q_apply_fun_raw(q_params, x)
+            metrics = pred[key]
+            if key in ["class_prob", "class_logit"]:
+                metrics = metrics.max(axis = -1)
+            elif key in ["log_density"]:
+                metrics = metrics.flatten()
+            else:
+                assert(0)
+            met_vec = np.linspace(metrics.min(), metrics.max(), plot_points)
+            plot_x = np.empty(0)
+            plot_y0 = np.empty(0)
+            plot_y1 = np.empty(0)
+            for k in range(len(met_vec)):
+                if k < met_vec.size - 1:
+                    print(j, i, k, met_vec[k])
+                    '''
+                    if j == 0:
+                        is_valid = np.logical_and(met_vec[k] <= metrics, metrics < met_vec[k + 1])
+                        if is_valid.any():
+                            y_ans = y[is_valid]
+                            y_prd = pred["class_prob"].argmax(axis = -1)[is_valid]
+                            ok_rate = (y_ans == y_prd).mean()
+                            plot_y0 = np.append(plot_y0, ok_rate)
+                            plot_y1 = np.append(plot_y1, is_valid.mean())
+                            plot_x = np.append(plot_x, 0.5 * (met_vec[k] + met_vec[k + 1]))#cum + is_valid.mean())
+                        is_valid = met_vec[k] <= metrics
+                        if is_valid.any():
+                            y_ans = y[is_valid]
+                            y_prd = pred["class_prob"].argmax(axis = -1)[is_valid]
+                            ok_rate = (y_ans == y_prd).mean()
+                            plot_y = np.append(plot_y, ok_rate)
+                            plot_x = np.append(plot_x, is_valid.mean())#cum + is_valid.mean())
+                    '''
+                    if j == 0:
+                        #is_valid = np.logical_and(met_vec[k] <= metrics, metrics < met_vec[k + 1]) 
+                        is_valid = (met_vec[k] <= metrics)
+                        all_y_prd = pred["class_prob"].argmax(axis = -1) + 1
+                        if is_valid.any():
+                            y_prd = all_y_prd[is_valid]
+                            y_ans = y[is_valid]
+                            correct_rate = (y_prd == y_ans).sum() / (y != 0).sum()
+                            unseen_rate = (y_ans == 0).sum() / (y == 0).sum()
+                        else:
+                            correct_rate = 0.0
+                            unseen_rate = 1.0
 
-    for i, (title, metrics, pos) in enumerate( [["softmax_score", pred_prob, 142],
-                                                ["logit_score", pred_logi, 143],
-                                                ["log_density", pred_dens, 144]]):
-        ax = fig.add_subplot(pos)
-        accuracy = np.zeros((plot_points,), dtype = np.float32)
-        error = np.zeros((plot_points,), dtype = np.float32)
-        unlearn = np.zeros((plot_points,), dtype = np.float32)
-        plot_metrics = np.zeros((plot_points,), dtype = np.float32)
-        for i, metric in enumerate(tqdm(np.linspace(metrics.min(), metrics.max(), plot_points))):
-            is_output = (float(metric) <= metrics)
-            accuracy[i] = float(correct[is_output].sum() / is_output.size)
-            error[i] = float(incorrect[is_output].sum() / is_output.size)
-            unlearn[i] = 1.0 - accuracy[i] - error[i] 
-            plot_metrics[i] = float(metric)
-        
-        zeros = np.zeros(error.shape)
-        ones = np.ones(error.shape)
-        plt.fill_between(plot_metrics, zeros, error, facecolor = 'r', alpha=0.5)
-        plt.fill_between(plot_metrics, error, error + unlearn, facecolor = 'g', alpha=0.5)
-        plt.fill_between(plot_metrics, error + unlearn, ones, facecolor = 'b', alpha=0.5)
-        plt.xlim(plot_metrics.min(), plot_metrics.max())
-        plt.title(title)
-        if i == 0:
-            plt.legend()
+                        plot_x  = np.append(plot_x,  1.0 - unseen_rate)
+                        plot_y0 = np.append(plot_y0, correct_rate)
+            #ax1 = fig.add_subplot(3, 5, j * 5 + i + 1)
+            #ax1 = fig.add_subplot(111)
+            plt.plot(plot_x, plot_y0, label = xlabel, color = colors[i], linestyle = linestyles[i])
+            #plt.plot(plot_x, plot_y1, color = "red")
+    plt.xlim(0.0, 1.0)
+    plt.ylim(0.0, 1.0)
+    FONT = "Myrica M"
+    plt.xlabel("未学習画像のうち、未学習と判定できた割合", fontname = FONT)
+    plt.ylabel("学習済画像のうち、学習済と判定＆正解した割合", fontname = FONT)
+    plt.legend(prop={"family":FONT})
+    plt.title("未学習判定と正解率のトレードオフ", fontname = FONT)
     plt.savefig("unk_graphs.png")
     plt.show()
 
@@ -236,16 +254,16 @@ def get_scale(sampler, sample_num, x_dim):
         x = jnp.append(x, x_new.reshape((x_new.shape[0], -1)), axis = 0)
     return x.mean(), x.std()
 
-def main(is_eval):
+def main(is_eval, class_num):
     _rng = jax.random.PRNGKey(SEED)
     
     _rng, rng_d, rng_q, rng_f = jax.random.split(_rng, 4)
-    train_sampler = Mnist(rng_d, BATCH_SIZE, "train", one_hot = True, dequantize = True, flatten = True)#, remove_classes=[0])
-    test_sampler = Mnist(rng_d, 10000, "test", one_hot = False, dequantize = True, flatten = True)
+    train_sampler = Mnist(rng_d, BATCH_SIZE, "train", one_hot = True, dequantize = True, flatten = True, class_num = class_num)#, remove_classes=[0])
+    test_sampler = Mnist(rng_d, 10000, "test", one_hot = False, dequantize = True, flatten = True, class_num = class_num)#, remove_classes=[0])
     mu, sigma = get_scale(train_sampler, 1000, X_DIM)
     print("mu={}, sigma={}".format(mu, sigma))
 
-    q_init_fun, q_apply_fun_raw = jem(mlp(CLASS_NUM), mu, sigma)
+    q_init_fun, q_apply_fun_raw = jem(mlp(class_num), mu, sigma)
     f_init_fun, f_apply_fun = mlp(X_DIM)
     q_opt_init, q_opt_update, q_get_params = optimizers.adam(Q_LR)
     f_opt_init, f_opt_update, f_get_params = optimizers.adam(F_LR)
@@ -261,7 +279,7 @@ def main(is_eval):
     def accuracy(q_params, arg_test_sampler):
         x_batch, y_batch = arg_test_sampler.sample(get_all = True)
         pred_prob = q_apply_fun_classify(q_params, x_batch)
-        pred_idx = jnp.argmax(pred_prob, axis = -1)
+        pred_idx = jnp.argmax(pred_prob, axis = -1)# + 1
         return (y_batch == pred_idx).mean()
     def q_loss(q_params, f_params, x_batch, y_batch, rng):
         loss = 0.0
@@ -320,22 +338,24 @@ def main(is_eval):
             print(  "{:.2f}epoch".format(cnt / (60000 / BATCH_SIZE)),
                     "{:.2f}sec".format(t1 - t0),
                     "{:.2f}%".format(accuracy(q_get_params(q_opt_state), test_sampler) * 100),
-                    "qx_loss={:.2f}".format(q_loss_val / (t - t_old)),
-                    "fx_loss={:.2f}".format(-1 * f_loss_val / (c - c_old)),
+                    "qx_loss={:.5f}".format(q_loss_val / (t - t_old)),
+                    "fx_loss={:.5f}".format(-1 * f_loss_val / (c - c_old)),
                     ) 
             q_loss_val, f_loss_val = 0.0, 0.0
             t_old, c_old =  t, c
             t0 = t1
             pickle.dump((q_get_params(q_opt_state), f_get_params(f_opt_state)), open(SAVE_PATH, "wb"))
 
-    show_result(q_opt_state, q_get_params, q_apply_fun_raw, test_sampler)
-    return
     make_conf_mat(q_opt_state, q_get_params, q_apply_fun_raw, test_sampler)
+    return
+    show_sample(class_num, q_opt_state, q_get_params, q_apply_fun_raw, test_sampler)
 
 if __name__ == "__main__":
+    CLASS_NUM = 10
     parser = argparse.ArgumentParser()
     parser.add_argument("--eval", "-e", action = "store_true")
     arg = parser.parse_args()
     #arg.eval = True
-    main(arg.eval)
+    #show_graph()
+    main(arg.eval, CLASS_NUM)
     print("Done.")
