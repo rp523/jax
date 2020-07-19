@@ -46,16 +46,24 @@ def mlp(out_ch):
                     serial(SkipDense(300), Swish()),
                     serial(Dense(out_ch)),
                     )
+                    
+def get_scale(sampler, sample_num, x_dim):
+    x = jnp.empty((0, x_dim))
+    while x.shape[0] <= sample_num:
+        x_new, _ = sampler.sample()
+        x = jnp.append(x, x_new.reshape((x_new.shape[0], -1)), axis = 0)
+    return x.mean(axis = 0), x.std(axis = 0)
 
 def jem(base_net, init_mu, init_sigma):
     base_init_fun, base_apply_fun = base_net
     def init_fun(rng, input_shape):
         rng_base, rng_mu, rng_sigma = jax.random.split(rng, 3)
         _, base_params = base_init_fun(rng_base, input_shape)
-        mu_shape = tuple(input_shape[1:])
-        mu = jax.nn.initializers.ones(rng_mu, mu_shape) * init_mu
-        log_sigma = jnp.log(jax.nn.initializers.ones(rng_sigma, (1,)) * init_sigma)
-        params = list(base_params) + [(mu, log_sigma)]
+        designed_shape = tuple(input_shape[1:])
+        assert(designed_shape == init_mu.shape)
+        assert(designed_shape == init_sigma.shape)
+        init_log_sigma = jnp.log(init_sigma)
+        params = list(base_params) + [(init_mu, init_log_sigma)]
         return None, params
     def apply_fun(params, inputs, **kwargs):
         base_params = params[:-1]
@@ -65,7 +73,8 @@ def jem(base_net, init_mu, init_sigma):
         mu, log_sigma = params[-1]
         mu = mu.reshape(tuple([1] + list(mu.shape)))
         sigma = jnp.exp(log_sigma)
-        log_gauss = - ((inputs - mu) ** 2).sum(axis = -1) / (2 * sigma ** 2)
+        log_gauss = - ((inputs - mu) ** 2) / (2 * sigma ** 2)
+        log_gauss = log_gauss.sum(axis = -1)
         log_gauss = log_gauss.reshape((log_q_x_base.shape[0], -1))
         log_q_x = log_q_x_base + log_gauss
         '''
@@ -100,7 +109,7 @@ def make_conf_mat(q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_s
                 square = True)
     plt.savefig('conf_mat.png')
 
-def show_sample(class_num, q_opt_state, arg_q_get_params, arg_q_apply_fun_raw, arg_test_sampler):
+def show_sample(class_num, q_opt_state, arg_q_get_params, arg_q_apply_fun_raw):
     q_params = arg_q_get_params(q_opt_state)
 
     # sample data
@@ -247,13 +256,6 @@ def show_graph():
     plt.savefig("unk_graphs.png")
     plt.show()
 
-def get_scale(sampler, sample_num, x_dim):
-    x = jnp.empty((0, x_dim))
-    while x.shape[0] <= sample_num:
-        x_new, _ = sampler.sample()
-        x = jnp.append(x, x_new.reshape((x_new.shape[0], -1)), axis = 0)
-    return x.mean(), x.std()
-
 def main(is_eval, class_num):
     _rng = jax.random.PRNGKey(SEED)
     
@@ -261,7 +263,7 @@ def main(is_eval, class_num):
     train_sampler = Mnist(rng_d, BATCH_SIZE, "train", one_hot = True, dequantize = True, flatten = True, class_num = class_num)#, remove_classes=[0])
     test_sampler = Mnist(rng_d, 10000, "test", one_hot = False, dequantize = True, flatten = True, class_num = class_num)#, remove_classes=[0])
     mu, sigma = get_scale(train_sampler, 1000, X_DIM)
-    print("mu={}, sigma={}".format(mu, sigma))
+    #print("mu={}, sigma={}".format(mu, sigma))
 
     q_init_fun, q_apply_fun_raw = jem(mlp(class_num), mu, sigma)
     f_init_fun, f_apply_fun = mlp(X_DIM)
@@ -346,9 +348,9 @@ def main(is_eval, class_num):
             t0 = t1
             pickle.dump((q_get_params(q_opt_state), f_get_params(f_opt_state)), open(SAVE_PATH, "wb"))
 
-    make_conf_mat(q_opt_state, q_get_params, q_apply_fun_raw, test_sampler)
+    show_sample(class_num, q_opt_state, q_get_params, q_apply_fun_raw)
     return
-    show_sample(class_num, q_opt_state, q_get_params, q_apply_fun_raw, test_sampler)
+    make_conf_mat(q_opt_state, q_get_params, q_apply_fun_raw, test_sampler)
 
 if __name__ == "__main__":
     CLASS_NUM = 10
