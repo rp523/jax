@@ -46,7 +46,7 @@ class Mnist:
                     assert(0)
                 self.__all_data[key] = data
 
-        if isinstance(remove_classes, list):
+        if remove_classes is not None:
             for img_key, lbl_key in    [["train_img", "train_label"],
                                         ["test_img", "test_label"]]:
                 for remove_val in remove_classes:
