@@ -6,20 +6,20 @@ from PIL import Image
 import jax
 import jax.numpy as jnp
 
-class Mnist:
+class FashionMnist:
     def __init__(self, rng, batch_size, data_type, one_hot, dequantize, flatten, remove_classes = None, remove_col_too = False):
         self.__batch_size = batch_size
         self.__rng = rng
         self.__data_type = data_type
 
-        url_base = "http://yann.lecun.com/exdb/mnist/"
+        url_base = "http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/"
         self.__key_file = {
             "train_img":"train-images-idx3-ubyte.gz",
             "train_label":"train-labels-idx1-ubyte.gz",
             "test_img":"t10k-images-idx3-ubyte.gz",
             "test_label":"t10k-labels-idx1-ubyte.gz"
         }
-        dir_path = "mnist"
+        dir_path = "fashion_mnist"
         if not os.path.exists(dir_path):
             os.makedirs(dir_path)
         for file_name in self.__key_file.values():
@@ -36,7 +36,7 @@ class Mnist:
                     data = data[16:].reshape((-1, 28, 28))
                     if dequantize:
                         self.__rng, _rng = jax.random.split(self.__rng)
-                        data = Mnist.dequantize(_rng, data)
+                        data = FashionMnist.dequantize(_rng, data)
                     if flatten:
                         data = data.reshape((data.shape[0], -1))
                 elif key.find("label") >= 0:
@@ -64,7 +64,7 @@ class Mnist:
         self.__class_num = 10
         if remove_classes is not None:
             self.__class_num -= len(remove_classes)
-        
+
     def test_visualize(self):
         count = {}
         labels = np.arange(self.__class_num)
@@ -76,6 +76,7 @@ class Mnist:
             if not os.path.exists(dst_dir_path):
                 os.makedirs(dst_dir_path)
             imgs = self.__all_data[img_key]
+            imgs = FashionMnist.quantize(imgs)
             labels = self.__all_data[label_key]
             for img, label in zip(imgs, labels):
                 pil = Image.fromarray(img.astype(np.uint8))
@@ -122,21 +123,22 @@ class Mnist:
 
 def main():
     rng = jax.random.PRNGKey(0)
-    m = Mnist(  rng,
-                batch_size = 1,
-                data_type = "train",
-                one_hot = False,
-                dequantize = True,
-                flatten = False,
+    m = FashionMnist(   rng,
+                        batch_size = 1,
+                        data_type = "train",
+                        one_hot = False,
+                        dequantize = True,
+                        flatten = False,
     )
     imgs, lbls = m.sample()
     print(imgs.min(), imgs.max())
-    imgs = Mnist.quantize(imgs)
+    imgs = FashionMnist.quantize(imgs)
     imgs = np.asarray(jax.device_put(imgs))
     print(imgs.min(), imgs.max())
     img = imgs[0]
     Image.fromarray(img).show()
     print(lbls[0])
+    m.test_visualize()
 
 if __name__ == "__main__":
     main()
