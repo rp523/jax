@@ -7,11 +7,10 @@ import jax
 import jax.numpy as jnp
 
 class Mnist:
-    def __init__(self, rng, batch_size, data_type, one_hot, dequantize, flatten, remove_classes = None, class_num = 10):
+    def __init__(self, rng, batch_size, data_type, one_hot, dequantize, flatten, remove_classes = None, remove_col_too = False):
         self.__batch_size = batch_size
         self.__rng = rng
         self.__data_type = data_type
-        self.__class_num = class_num
 
         url_base = "http://yann.lecun.com/exdb/mnist/"
         self.__key_file = {
@@ -57,10 +56,15 @@ class Mnist:
         if one_hot:
             for lbl_key in ["train_label", "test_label"]:
                 self.__all_data[lbl_key] = jnp.eye(10)[self.__all_data[lbl_key]]
-                if isinstance(remove_classes, list):
-                    if len(remove_classes) == 10 - class_num:
+                if remove_classes is not None:
+                    if remove_col_too:
                         for remove_val in np.sort(np.asarray(remove_classes))[::-1]:
                             self.__all_data[lbl_key] = np.delete(self.__all_data[lbl_key], obj = remove_val, axis = 1)
+        
+        self.__class_num = 10
+        if remove_classes is not None:
+            self.__class_num -= len(remove_classes)
+        
     def test_visualize(self):
         count = {}
         labels = np.arange(self.__class_num)
