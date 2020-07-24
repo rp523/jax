@@ -7,7 +7,8 @@ import jax
 import jax.numpy as jnp
 
 class Mnist:
-    def __init__(self, rng, batch_size, data_type, one_hot, dequantize, flatten, remove_classes = None, remove_col_too = False):
+    def __init__(self, rng, batch_size, data_type, one_hot, dequantize, flatten, dir_path,
+                        remove_classes = None, remove_col_too = False):
         self.__batch_size = batch_size
         self.__rng = rng
         self.__data_type = data_type
@@ -19,7 +20,7 @@ class Mnist:
             "test_img":"t10k-images-idx3-ubyte.gz",
             "test_label":"t10k-labels-idx1-ubyte.gz"
         }
-        dir_path = "mnist"
+        dir_path = os.path.join(dir_path ,"mnist")
         if not os.path.exists(dir_path):
             os.makedirs(dir_path)
         for file_name in self.__key_file.values():
