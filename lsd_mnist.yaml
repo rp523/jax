@@ -1,0 +1,20 @@
+seed: 0
+save_path: "params.bin"
+optim:
+  epoch_num: 2000
+  f_lr: 1E-3
+  q_lr: 1E-3
+  batch_size: 128
+  l2: 0.5
+  critic_loop: 10
+  focal_gamma: 2.0
+  weight_decay: 1E-5
+  lsd_weight: 1.0
+  classify_weight: 1E-0
+data:
+  train:
+    remove_class: []
+    remove_col_too: False
+  test:
+    remove_class: []
+    remove_col_too: False
