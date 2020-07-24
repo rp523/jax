@@ -12,15 +12,9 @@ from ebm.lsd import LSD_Learner
 from model.maker.model_maker import net_maker
 from sklearn.metrics import confusion_matrix
 import seaborn as sns
+import hydra
 
-SEED = 0
-BATCH_SIZE = 128
 X_DIM = 28 * 28
-Q_LR = 1E-3
-F_LR = 1E-3
-LAMBDA = 0.5
-C = 10
-FOCAL_GAMMA = 2.0
 
 def Swish():
     def init_fun(rng, input_shape):
@@ -264,19 +258,27 @@ def show_graph():
     plt.savefig("unk_graphs.png")
     plt.show()
 
-def main(is_eval, class_num):
-    _rng = jax.random.PRNGKey(SEED)
-    
-    _rng, rng_d, rng_q, rng_f = jax.random.split(_rng, 4)
-    train_sampler = Mnist(rng_d, BATCH_SIZE, "train", one_hot = True, dequantize = True, flatten = True, class_num = class_num)#, remove_classes=[0])
-    test_sampler = Mnist(rng_d, 10000, "test", one_hot = False, dequantize = True, flatten = True, class_num = class_num)#, remove_classes=[0])
-    mu, sigma = get_scale(train_sampler, 1000, X_DIM)
-    #print("mu={}, sigma={}".format(mu, sigma))
+@hydra.main(config_path="lsd_mnist.yaml")
+def main(cfg):
+    print(cfg.pretty())
 
-    q_init_fun, q_apply_fun_raw = jem(mlp(class_num), mu, sigma)
+    _rng = jax.random.PRNGKey(cfg.seed)
+    _rng, rng_d, rng_q, rng_f = jax.random.split(_rng, 4)
+
+    data_cfg = cfg.data
+    train_sampler = Mnist(rng_d, cfg.optim.batch_size, "train", one_hot = True, dequantize = True, flatten = True,
+                            remove_classes = data_cfg.train.remove_class, remove_col_too = data_cfg.train.remove_col_too)
+    test_sampler = Mnist(rng_d, 10000, "test", one_hot = False, dequantize = True, flatten = True,
+                            remove_classes = data_cfg.test.remove_class, remove_col_too = data_cfg.test.remove_col_too)
+    mu, sigma = get_scale(train_sampler, 1000, X_DIM)
+
+    train_class_num = 10 - len(data_cfg.train.remove_class) * int(data_cfg.train.remove_col_too)
+    q_init_fun, q_apply_fun_raw = jem(mlp(  train_class_num),
+                                            mu,
+                                            sigma)
     f_init_fun, f_apply_fun = mlp(X_DIM)
-    q_opt_init, q_opt_update, q_get_params = optimizers.adam(Q_LR)
-    f_opt_init, f_opt_update, f_get_params = optimizers.adam(F_LR)
+    q_opt_init, q_opt_update, q_get_params = optimizers.adam(cfg.optim.q_lr)
+    f_opt_init, f_opt_update, f_get_params = optimizers.adam(cfg.optim.f_lr)
 
     def q_apply_fun_classify(q_params, x_batch):
         return q_apply_fun_raw(q_params, x_batch)["class_prob"]
@@ -284,7 +286,7 @@ def main(is_eval, class_num):
         return q_apply_fun_raw(q_params, x_batch)["log_density"]
     def classify_loss(q_params, x_batch, y_batch):
         y_pred = q_apply_fun_classify(q_params, x_batch)
-        cross_entropy = (- y_batch * ((1.0 - y_pred) ** FOCAL_GAMMA) * jnp.log(y_pred + 1E-10)).sum(axis = -1).mean()
+        cross_entropy = (- y_batch * ((1.0 - y_pred) ** cfg.optim.focal_gamma) * jnp.log(y_pred + 1E-10)).sum(axis = -1).mean()
         return cross_entropy
     def accuracy(q_params, arg_test_sampler):
         x_batch, y_batch = arg_test_sampler.sample(get_all = True)
@@ -293,10 +295,11 @@ def main(is_eval, class_num):
         return (y_batch == pred_idx).mean()
     def q_loss(q_params, f_params, x_batch, y_batch, rng):
         loss = 0.0
-        lsd, _ = LSD_Learner.calc_loss_metrics(q_params, f_params, x_batch, q_apply_fun_density, f_apply_fun, rng)
-        loss += lsd
-        loss += 1E-5 * net_maker.weight_decay(q_params)
-        loss += 1E-1 * classify_loss(q_params, x_batch, y_batch)
+        if cfg.optim.lsd_weight > 0.0:
+            lsd, _ = LSD_Learner.calc_loss_metrics(q_params, f_params, x_batch, q_apply_fun_density, f_apply_fun, rng)
+            loss += cfg.optim.lsd_weight * lsd
+        loss += cfg.optim.weight_decay * net_maker.weight_decay(q_params)
+        loss += cfg.optim.classify_weight * classify_loss(q_params, x_batch, y_batch)
         return loss
     @jax.jit
     def q_update(t_cnt, q_opt_state, f_opt_state, x_batch, y_batch, rng):
@@ -310,15 +313,15 @@ def main(is_eval, class_num):
         loss_val = 0.0
         q_params = q_get_params(q_opt_state)
         f_params = f_get_params(f_opt_state)
-        loss_val, grad_val = jax.value_and_grad(LSD_Learner.f_loss, argnums = 1)(q_params, f_params, x_batch, LAMBDA, q_apply_fun_density, f_apply_fun, rng)
-        f_opt_state = f_opt_update(c_cnt, grad_val, f_opt_state)
+        if cfg.optim.lsd_weight > 0.0:
+            loss_val, grad_val = jax.value_and_grad(LSD_Learner.f_loss, argnums = 1)(q_params, f_params, x_batch, cfg.optim.l2, q_apply_fun_density, f_apply_fun, rng)
+            f_opt_state = f_opt_update(c_cnt, grad_val, f_opt_state)
         return (c_cnt + 1), f_opt_state, loss_val
-    SAVE_PATH = r"params.bin"
-    if not os.path.exists(SAVE_PATH):
-        _, q_init_params = q_init_fun(rng_q, (BATCH_SIZE, X_DIM))
-        _, f_init_params = f_init_fun(rng_f, (BATCH_SIZE, X_DIM))
+    if not os.path.exists(cfg.save_path):
+        _, q_init_params = q_init_fun(rng_q, (cfg.optim.batch_size, X_DIM))
+        _, f_init_params = f_init_fun(rng_f, (cfg.optim.batch_size, X_DIM))
     else:
-        (q_init_params, f_init_params) = pickle.load(open(SAVE_PATH, "rb"))
+        (q_init_params, f_init_params) = pickle.load(open(cfg.save_path, "rb"))
         print("LODADED INIT WEIGHT")
     q_opt_state = q_opt_init(q_init_params)
     f_opt_state = f_opt_init(f_init_params)
@@ -329,43 +332,41 @@ def main(is_eval, class_num):
     q_loss_val, f_loss_val = 0.0, 0.0
     
     cnt = 0
-    while not is_eval:
-        # learning
-        x_batch, y_batch = train_sampler.sample()
-        rng1, _rng = jax.random.split(_rng)
-        if cnt % C == 0:
-            # joint model
-            t, q_opt_state, q_loss_val1 = q_update(t, q_opt_state, f_opt_state, x_batch, y_batch, rng1)
-            q_loss_val += q_loss_val1
-        else:
-            # cirtic
-            c, f_opt_state, f_loss_val1 = f_update(c, q_opt_state, f_opt_state, x_batch, rng1)
-            f_loss_val += f_loss_val1
-        cnt += 1
+    if cfg.optim.epoch_num > 0:
+        while True:
+            # learning
+            x_batch, y_batch = train_sampler.sample()
+            rng1, _rng = jax.random.split(_rng)
+            if cnt % cfg.optim.critic_loop == 0:
+                # joint model
+                t, q_opt_state, q_loss_val1 = q_update(t, q_opt_state, f_opt_state, x_batch, y_batch, rng1)
+                q_loss_val += q_loss_val1
+            else:
+                # cirtic
+                c, f_opt_state, f_loss_val1 = f_update(c, q_opt_state, f_opt_state, x_batch, rng1)
+                f_loss_val += f_loss_val1
+            cnt += 1
 
-        t1 = time.time()
-        if t1 - t0 > 20.0:
-            print(  "{:.2f}epoch".format(cnt / (60000 / BATCH_SIZE)),
-                    "{:.2f}sec".format(t1 - t0),
-                    "{:.2f}%".format(accuracy(q_get_params(q_opt_state), test_sampler) * 100),
-                    "qx_loss={:.5f}".format(q_loss_val / (t - t_old)),
-                    "fx_loss={:.5f}".format(-1 * f_loss_val / (c - c_old)),
-                    ) 
-            q_loss_val, f_loss_val = 0.0, 0.0
-            t_old, c_old =  t, c
-            t0 = t1
-            pickle.dump((q_get_params(q_opt_state), f_get_params(f_opt_state)), open(SAVE_PATH, "wb"))
+            t1 = time.time()
+            if (t1 - t0 > 20.0) and (t > t_old) and (c > c_old):
+                print(  "{:.2f}epoch".format(cnt / (60000 / cfg.optim.batch_size)),
+                        "{:.2f}sec".format(t1 - t0),
+                        "{:.2f}%".format(accuracy(q_get_params(q_opt_state), test_sampler) * 100),
+                        "qx_loss={:.5f}".format(q_loss_val / (t - t_old)),
+                        "fx_loss={:.5f}".format(-1 * f_loss_val / (c - c_old)),
+                        ) 
+                q_loss_val, f_loss_val = 0.0, 0.0
+                t_old, c_old =  t, c
+                t0 = t1
+                pickle.dump((q_get_params(q_opt_state), f_get_params(f_opt_state)), open(cfg.save_path, "wb"))
+            
+            if cnt / (60000 / cfg.optim.batch_size) > cfg.optim.epoch_num:
+                break
 
-    show_sample(class_num, q_opt_state, q_get_params, q_apply_fun_raw)
+    show_sample(train_class_num, q_opt_state, q_get_params, q_apply_fun_raw)
     return
     make_conf_mat(q_opt_state, q_get_params, q_apply_fun_raw, test_sampler)
 
 if __name__ == "__main__":
-    CLASS_NUM = 10
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--eval", "-e", action = "store_true")
-    arg = parser.parse_args()
-    #arg.eval = True
-    #show_graph()
-    main(arg.eval, CLASS_NUM)
+    main()
     print("Done.")
