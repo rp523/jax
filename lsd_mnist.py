@@ -189,7 +189,7 @@ def show_graph():
             paths = ["exp/05_class_non0"] * 2 + ["exp/04_joint_non0"] * 3
             paths = ["exp/08_class_non0train"] * 2 + ["exp/07_joint_non0train"] * 3
         rng = jax.random.PRNGKey(0)
-        test_sampler = Mnist(rng, 10000, "test", one_hot = False, dequantize = True, flatten = True)
+        test_sampler = Mnist(rng, 10000, "test", one_hot = False, dequantize = True, flatten = True, dir_path = hydra.utils.get_original_cwd())
             
         for i, (xlabel, key, weight_path) in enumerate(zip(titles, keys, paths)):
             dummy = 0.0
@@ -265,14 +265,13 @@ def main(cfg):
     _rng = jax.random.PRNGKey(cfg.seed)
     _rng, rng_d, rng_q, rng_f = jax.random.split(_rng, 4)
 
-    data_cfg = cfg.data
-    train_sampler = Mnist(rng_d, cfg.optim.batch_size, "train", one_hot = True, dequantize = True, flatten = True,
-                            remove_classes = data_cfg.train.remove_class, remove_col_too = data_cfg.train.remove_col_too)
-    test_sampler = Mnist(rng_d, 10000, "test", one_hot = False, dequantize = True, flatten = True,
-                            remove_classes = data_cfg.test.remove_class, remove_col_too = data_cfg.test.remove_col_too)
+    train_sampler = Mnist(rng_d, cfg.optim.batch_size, "train", one_hot = True, dequantize = True, flatten = True, dir_path = hydra.utils.get_original_cwd(),
+                            remove_classes = cfg.data.remove_class, remove_col_too = cfg.data.remove_col_too)
+    test_sampler = Mnist(rng_d, 10000, "test", one_hot = False, dequantize = True, flatten = True, dir_path = hydra.utils.get_original_cwd(),
+                            remove_classes = cfg.data.remove_class, remove_col_too = cfg.data.remove_col_too)
     mu, sigma = get_scale(train_sampler, 1000, X_DIM)
 
-    train_class_num = 10 - len(data_cfg.train.remove_class) * int(data_cfg.train.remove_col_too)
+    train_class_num = 10 - len(cfg.data.remove_class) * int(cfg.data.remove_col_too)
     q_init_fun, q_apply_fun_raw = jem(mlp(  train_class_num),
                                             mu,
                                             sigma)
@@ -314,7 +313,7 @@ def main(cfg):
         q_params = q_get_params(q_opt_state)
         f_params = f_get_params(f_opt_state)
         if cfg.optim.lsd_weight > 0.0:
-            loss_val, grad_val = jax.value_and_grad(LSD_Learner.f_loss, argnums = 1)(q_params, f_params, x_batch, cfg.optim.l2, q_apply_fun_density, f_apply_fun, rng)
+            loss_val, grad_val = jax.value_and_grad(LSD_Learner.f_loss, argnums = 1)(q_params, f_params, x_batch, cfg.optim.critic_l2, q_apply_fun_density, f_apply_fun, rng)
             f_opt_state = f_opt_update(c_cnt, grad_val, f_opt_state)
         return (c_cnt + 1), f_opt_state, loss_val
     if not os.path.exists(cfg.save_path):
