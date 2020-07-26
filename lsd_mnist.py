@@ -132,10 +132,11 @@ def show_sample(class_num, q_opt_state, arg_q_get_params, arg_q_apply_fun_raw):
             met_record = np.ones(record_num) * met
             cnt = 0
             t0 = time.time()
-            while True:
+            for lr in np.linspace(1E-0, 1E-5, 999999):
                 dfdx = jax.grad(metric_func)(x, q_params, h)
                 rng, rng1 = jax.random.split(rng)
-                x += 1E-0 * dfdx + 1E-2 * jax.random.uniform(rng1, x.shape)
+                epsilon = jax.random.uniform(rng1, x.shape)
+                x += 1.0 * dfdx + lr * epsilon
                 met = metric_func(x, q_params, h)
                 met_record[cnt] = float(met)
                 cnt = (cnt + 1) % record_num
@@ -149,20 +150,13 @@ def show_sample(class_num, q_opt_state, arg_q_get_params, arg_q_apply_fun_raw):
                         "{:.3f}".format(met),
                         "{:.3f}".format(met_record.max() - met_record.min()))
                     t0 = t1
-                if (met_record.max() - met_record.min()) < 1E-2:
-                    print(
-                        h,
-                        w,
-                        sc,
-                        "{:.3f}".format(met),
-                        "{:.3f}".format(met_record.max() - met_record.min()))
-                    break
             x = Mnist.quantize(x.reshape((28, 28)))
             y = np.asarray(x).astype(np.uint8)
             all_arr[h * 28: (h + 1) * 28, w * 28 : (w + 1) * 28] = y
     pil = Image.fromarray(all_arr)
     w, h = pil.size
     pil = pil.resize((2*w, 2*h))
+    pil.save("sampled.png")
     pil.show()
 
 def show_graph():
@@ -298,7 +292,8 @@ def main(cfg):
             lsd, _ = LSD_Learner.calc_loss_metrics(q_params, f_params, x_batch, q_apply_fun_density, f_apply_fun, rng)
             loss += cfg.optim.lsd_weight * lsd
         loss += cfg.optim.weight_decay * net_maker.weight_decay(q_params)
-        loss += cfg.optim.classify_weight * classify_loss(q_params, x_batch, y_batch)
+        if cfg.optim.classify_weight > 0.0:
+            loss += cfg.optim.classify_weight * classify_loss(q_params, x_batch, y_batch)
         return loss
     @jax.jit
     def q_update(t_cnt, q_opt_state, f_opt_state, x_batch, y_batch, rng):
@@ -347,7 +342,8 @@ def main(cfg):
             cnt += 1
 
             t1 = time.time()
-            if (t1 - t0 > 20.0) and (t > t_old) and (c > c_old):
+            if ((t1 - t0 > 20.0) and (t > t_old) and (c > c_old)) \
+                or (cnt / (60000 / cfg.optim.batch_size) > cfg.optim.epoch_num):
                 print(  "{:.2f}epoch".format(cnt / (60000 / cfg.optim.batch_size)),
                         "{:.2f}sec".format(t1 - t0),
                         "{:.2f}%".format(accuracy(q_get_params(q_opt_state), test_sampler) * 100),
