@@ -344,12 +344,20 @@ def main(cfg):
             t1 = time.time()
             if ((t1 - t0 > 20.0) and (t > t_old) and (c > c_old)) \
                 or (cnt / (60000 / cfg.optim.batch_size) > cfg.optim.epoch_num):
-                print(  "{:.2f}epoch".format(cnt / (60000 / cfg.optim.batch_size)),
-                        "{:.2f}sec".format(t1 - t0),
-                        "{:.2f}%".format(accuracy(q_get_params(q_opt_state), test_sampler) * 100),
-                        "qx_loss={:.5f}".format(q_loss_val / (t - t_old)),
-                        "fx_loss={:.5f}".format(-1 * f_loss_val / (c - c_old)),
-                        ) 
+                log_txt = ""
+                for txt in ["{:.2f}epoch".format(cnt / (60000 / cfg.optim.batch_size)),
+                            "{:.2f}sec".format(t1 - t0),
+                            "{:.2f}%".format(accuracy(q_get_params(q_opt_state), test_sampler) * 100),
+                            "qx_loss={:.5f}".format(q_loss_val / (t - t_old)),
+                            "fx_loss={:.5f}".format(-1 * f_loss_val / (c - c_old)),
+                            ]:
+                    if log_txt != "":
+                        log_txt += ","
+                    log_txt += txt
+                print(log_txt)
+                with open("log.txt", "a") as f:
+                    f.write("{}\n".format(log_txt))
+
                 q_loss_val, f_loss_val = 0.0, 0.0
                 t_old, c_old =  t, c
                 t0 = t1
