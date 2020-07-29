@@ -8,6 +8,7 @@ import jax.numpy as jnp
 from jax.experimental.stax import serial, Dense, elementwise, FanOut, FanInSum, parallel, Identity, Conv, Tanh
 import jax.experimental.optimizers as optimizers
 from dataset.mnist import Mnist
+from dataset.fashion_mnist import FashionMnist
 from ebm.lsd import LSD_Learner
 from model.maker.model_maker import net_maker
 from sklearn.metrics import confusion_matrix
@@ -81,11 +82,14 @@ def jem(base_net, init_mu, init_sigma):
         log_gauss = log_gauss.reshape((inputs.shape[0], -1))
 
         base_params = params[:-1]
-        log_q_xy = base_apply_fun(base_params, inputs) + log_gauss
-        log_q_x_base = jax.scipy.special.logsumexp(log_q_xy, axis = 1).reshape((log_q_xy.shape[0], 1))
-        log_q_x = log_q_x_base
-        return {"class_logit" : log_q_xy,
+        log_q_xy_raw = base_apply_fun(base_params, inputs)
+        log_q_xy = log_q_xy_raw + log_gauss
+        log_q_x_raw = jax.scipy.special.logsumexp(log_q_xy, axis = 1).reshape((log_q_xy_raw.shape[0], 1))
+        log_q_x = jax.scipy.special.logsumexp(log_q_xy, axis = 1).reshape((log_q_xy.shape[0], 1))
+        return {"class_logit_raw" : log_q_xy_raw,
+                "class_logit" : log_q_xy,
                 "class_prob" : jax.nn.softmax(log_q_xy),
+                "log_density_raw" : log_q_x_raw,
                 "log_density" : log_q_x}
     return init_fun, apply_fun
 
@@ -159,97 +163,83 @@ def show_sample(class_num, q_opt_state, arg_q_get_params, arg_q_apply_fun_raw):
     pil.save("sampled.png")
     pil.show()
 
-def show_graph():
+def fashion_test():
     plt.clf()
-    plot_points = 50
+    plot_points = 200
 
-    colors = ["blue", "blue", "red", "red", "purple"]
-    linestyles = ["solid", "dashed", "solid", "dashed", "dashed"]
-    titles = [  "softmax",
-                "logit",
-                "尤度モデルsoftmax",
-                "尤度モデルlogit",
-                "尤度モデルdensity",
+    titles = [  "通常モデルのsoftmax最大値",
+                "通常モデルのlogit最大値",
+                "複合モデルの周辺尤度",
+                "複合モデルのsoftmax最大値",
+                "複合モデルのlogit最大値",
                 ]
     keys = ["class_prob",
-            "class_logit",
+            "class_logit_raw",
+            "log_density",
             "class_prob",
             "class_logit",
-            "log_density",
             ]
-    for j, model_class_num in enumerate([9]):
-        if j == 0:
-            #paths = ["exp/05_class_allclass"] * 2 + ["exp/03_joint_allclasses"] * 3
-            paths = ["exp/05_class_non0"] * 2 + ["exp/04_joint_non0"] * 3
-            paths = ["exp/08_class_non0train"] * 2 + ["exp/07_joint_non0train"] * 3
-        rng = jax.random.PRNGKey(0)
-        test_sampler = Mnist(rng, 10000, "test", one_hot = False, dequantize = True, flatten = True, dir_path = hydra.utils.get_original_cwd())
-            
-        for i, (xlabel, key, weight_path) in enumerate(zip(titles, keys, paths)):
-            dummy = 0.0
-            _, q_apply_fun_raw = jem(mlp(model_class_num), dummy, dummy)
-            q_params, _ = pickle.load(open(os.path.join(weight_path, "params.bin"), "rb"))
-            x, y = test_sampler.sample(get_all = True)
-            pred = q_apply_fun_raw(q_params, x)
-            metrics = pred[key]
-            if key in ["class_prob", "class_logit"]:
-                metrics = metrics.max(axis = -1)
-            elif key in ["log_density"]:
-                metrics = metrics.flatten()
-            else:
-                assert(0)
-            met_vec = np.linspace(metrics.min(), metrics.max(), plot_points)
-            plot_x = np.empty(0)
-            plot_y0 = np.empty(0)
-            plot_y1 = np.empty(0)
-            for k in range(len(met_vec)):
-                if k < met_vec.size - 1:
-                    print(j, i, k, met_vec[k])
-                    '''
-                    if j == 0:
-                        is_valid = np.logical_and(met_vec[k] <= metrics, metrics < met_vec[k + 1])
-                        if is_valid.any():
-                            y_ans = y[is_valid]
-                            y_prd = pred["class_prob"].argmax(axis = -1)[is_valid]
-                            ok_rate = (y_ans == y_prd).mean()
-                            plot_y0 = np.append(plot_y0, ok_rate)
-                            plot_y1 = np.append(plot_y1, is_valid.mean())
-                            plot_x = np.append(plot_x, 0.5 * (met_vec[k] + met_vec[k + 1]))#cum + is_valid.mean())
-                        is_valid = met_vec[k] <= metrics
-                        if is_valid.any():
-                            y_ans = y[is_valid]
-                            y_prd = pred["class_prob"].argmax(axis = -1)[is_valid]
-                            ok_rate = (y_ans == y_prd).mean()
-                            plot_y = np.append(plot_y, ok_rate)
-                            plot_x = np.append(plot_x, is_valid.mean())#cum + is_valid.mean())
-                    '''
-                    if j == 0:
-                        #is_valid = np.logical_and(met_vec[k] <= metrics, metrics < met_vec[k + 1]) 
-                        is_valid = (met_vec[k] <= metrics)
-                        all_y_prd = pred["class_prob"].argmax(axis = -1) + 1
-                        if is_valid.any():
-                            y_prd = all_y_prd[is_valid]
-                            y_ans = y[is_valid]
-                            correct_rate = (y_prd == y_ans).sum() / (y != 0).sum()
-                            unseen_rate = (y_ans == 0).sum() / (y == 0).sum()
-                        else:
-                            correct_rate = 0.0
-                            unseen_rate = 1.0
+    #paths = ["exp/05_class_allclass"] * 2 + ["exp/03_joint_allclasses"] * 3
+    weight_paths = ["/home/isgsktyktt/work/multirun/2020-07-29/08-45-26/0", # classify
+                    "/home/isgsktyktt/work/multirun/2020-07-29/08-45-26/0", # classify
+                    "/home/isgsktyktt/work/multirun/2020-07-28/21-59-23/5", # joint
+                    "/home/isgsktyktt/work/multirun/2020-07-28/21-59-23/5", # joint
+                    "/home/isgsktyktt/work/multirun/2020-07-28/21-59-23/5", # joint
+            ]
+    rng = jax.random.PRNGKey(0)
+    mnist = Mnist(rng, 10000, "test", one_hot = False, dequantize = True, flatten = True, dir_path = ".")
+    fashion = FashionMnist(rng, 10000, "test", one_hot = False, dequantize = True, flatten = True, dir_path = ".")
+        
+    for i, (xlabel, key, weight_path) in enumerate(zip(titles, keys, weight_paths)):
+        dummy = 0.0
+        _, q_apply_fun_raw = jem(mlp(10), dummy, dummy)
+        q_params, _ = pickle.load(open(os.path.join(weight_path, "params.bin"), "rb"))
+        mx, my = mnist.sample(get_all = True)
+        fx, fy = fashion.sample(get_all = True)
+        my_pred_dict = q_apply_fun_raw(q_params, mx)
+        fy_pred_dict = q_apply_fun_raw(q_params, fx)
+        my_metrics = my_pred_dict[key].max(axis = -1)
+        fy_metrics = fy_pred_dict[key].max(axis = -1)
 
-                        plot_x  = np.append(plot_x,  1.0 - unseen_rate)
-                        plot_y0 = np.append(plot_y0, correct_rate)
-            #ax1 = fig.add_subplot(3, 5, j * 5 + i + 1)
-            #ax1 = fig.add_subplot(111)
-            plt.plot(plot_x, plot_y0, label = xlabel, color = colors[i], linestyle = linestyles[i])
-            #plt.plot(plot_x, plot_y1, color = "red")
+        metrics = np.sort(np.append(my_metrics, fy_metrics))
+        met_idx = (np.linspace(0.0, 1.0, plot_points + 1)[:-1] * metrics.size).astype(np.int32)
+        met_vec = metrics[met_idx]
+        assert(met_vec.size == plot_points)
+        plot_x = np.zeros(plot_points)
+        plot_y = np.zeros(plot_points)
+        for k, met_val in enumerate(met_vec):
+            m_valid = (met_val <= my_metrics)
+            f_valid = (met_val >  fy_metrics)
+            all_my_pred = my_pred_dict["class_prob"].argmax(axis = -1)
+            #all_fy_pred = fy_pred_dict["class_prob"].argmax(axis = -1)
+            # y: correct rate of learned dataset
+            y_val = 0.0
+            if m_valid.any():
+                y_prd = all_my_pred[m_valid]
+                y_ans = my[m_valid]
+                correct_rate = (y_prd == y_ans).sum() / my.size
+                y_val = correct_rate
+            # x: uncertainty detect rate of unlearned dataset
+            uncertain_num = f_valid.sum()
+            uncertain_rate = uncertain_num / fy.size
+            x_val = uncertain_rate
+
+            plot_x[k] = x_val
+            plot_y[k] = y_val
+            print(i, k, met_val, x_val, y_val)
+
+        plt.plot(plot_x, plot_y, label = xlabel)
+        if 0:#i >= 2:
+            break
+
     plt.xlim(0.0, 1.0)
     plt.ylim(0.0, 1.0)
     FONT = "Myrica M"
     plt.xlabel("未学習画像のうち、未学習と判定できた割合", fontname = FONT)
-    plt.ylabel("学習済画像のうち、学習済と判定＆正解した割合", fontname = FONT)
+    plt.ylabel("学習済画像のうち、学習済と判定＆正解できた割合", fontname = FONT)
     plt.legend(prop={"family":FONT})
     plt.title("未学習判定と正解率のトレードオフ", fontname = FONT)
-    plt.savefig("unk_graphs.png")
+    plt.savefig("unk_graphs_.png")
     plt.show()
 
 @hydra.main(config_path="lsd_mnist.yaml")
@@ -371,5 +361,6 @@ def main(cfg):
     make_conf_mat(q_opt_state, q_get_params, q_apply_fun_raw, test_sampler)
 
 if __name__ == "__main__":
+    #fashion_test()
     main()
     print("Done.")
