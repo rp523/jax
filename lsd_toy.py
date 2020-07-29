@@ -7,14 +7,10 @@ import jax.numpy as jnp
 from ebm.toy_sampler import Sampler
 from ebm.lsd import LSD_Learner
 from model.maker.model_maker import net_maker
+import hydra
 
 SEED = 0
-BATCH_SIZE = 100
 X_DIM = 2
-HALF_BAND = 5.0
-LR = 1E-4
-LAMBDA = 10
-C = 5
 bin_num = 100
 
 def Swish():
@@ -44,11 +40,11 @@ def mlp(out_ch):
 
 def save_map(   q_apply_fun, q_params,
                 f_apply_fun, f_params,
-                x_record, sampler,
+                sampler, half_band,
                 save_path):
-    x = jnp.linspace(-HALF_BAND, HALF_BAND, bin_num)
+    x = jnp.linspace(-half_band, half_band, bin_num)
     x = jnp.tile(x.reshape(1, -1), (bin_num, 1))
-    y = jnp.linspace(-HALF_BAND, HALF_BAND, bin_num)
+    y = jnp.linspace(-half_band, half_band, bin_num)
     y = jnp.tile(y.reshape(-1, 1), (1, bin_num))
     data = jnp.append(x.reshape(-1, 1), y.reshape(-1, 1), axis = 1)
     assert(data.shape == (bin_num * bin_num, 2))
@@ -60,15 +56,12 @@ def save_map(   q_apply_fun, q_params,
     plt.clf()
     fig = plt.figure(figsize=(12, 10))
     
-    X = jnp.linspace(-HALF_BAND, HALF_BAND, bin_num)
-    Y = jnp.linspace(-HALF_BAND, HALF_BAND, bin_num)
+    X = jnp.linspace(-half_band, half_band, bin_num)
+    Y = jnp.linspace(-half_band, half_band, bin_num)
     X, Y = jnp.meshgrid(X, Y)
 
     ax = fig.add_subplot(221)
-    if x_record is not None:
-        plt.pcolor(X, Y, x_record.reshape(bin_num, bin_num))
-    else:
-        plt.pcolor(X, Y, sampler.prob(data).reshape(bin_num, bin_num))
+    plt.pcolor(X, Y, sampler.prob(data).reshape(bin_num, bin_num))
     plt.colorbar()
 
     ax = fig.add_subplot(222)
@@ -82,11 +75,14 @@ def save_map(   q_apply_fun, q_params,
 
     plt.savefig(save_path)
 
-def main():
+@hydra.main(config_path="lsd_toy.yaml")
+def main(cfg):
+    print(cfg.pretty())
+
     _rng = jax.random.PRNGKey(SEED)
     
     _rng, rng_s, rng_q, rng_f = jax.random.split(_rng, 4)
-    sampler = Sampler(rng_s, BATCH_SIZE * (C + 1), HALF_BAND)
+    sampler = Sampler(rng_s, cfg.optim.batch_size * (cfg.optim.critic_loop + 1), cfg.data.half_band)
     mu, sigma = LSD_Learner.get_scale(sampler, 1000, X_DIM)
 
     q_init_fun, q_apply_fun = LSD_Learner.gaussian_net(mlp(1), mu, sigma)
@@ -94,9 +90,9 @@ def main():
     def f_apply_fun(f_params, x):
         return f_apply_fun_raw(f_params, x)["out"]
     q_opt_init, q_opt_update, q_get_params = \
-        optimizers.adam(LR)
+        optimizers.adam(cfg.optim.lr)
     f_opt_init, f_opt_update, f_get_params = \
-        optimizers.adam(LR)
+        optimizers.adam(cfg.optim.lr)
 
     @jax.jit
     def update( t_cnt, c_cnt,
@@ -104,60 +100,55 @@ def main():
                 rng):
         idx = 0
 
-        rngs = jax.random.split(rng, (1 + C) + 1)
-        q_opt_state, q_loss_val = LSD_Learner.q_update(t_cnt, q_opt_state, f_opt_state, x_batch[idx * BATCH_SIZE : (idx+1) * BATCH_SIZE],
+        rngs = jax.random.split(rng, (1 + cfg.optim.critic_loop) + 1)
+        q_opt_state, q_loss_val = LSD_Learner.q_update(t_cnt, q_opt_state, f_opt_state, x_batch[idx * cfg.optim.batch_size : (idx+1) * cfg.optim.batch_size],
                                                 q_apply_fun, f_apply_fun, q_get_params, f_get_params, q_opt_update, rngs[idx])
         idx += 1
         t_cnt += 1
-        for _ in range(C):
-            c_cnt, f_opt_state, f_loss_val = LSD_Learner.f_update( c_cnt, q_opt_state, f_opt_state, x_batch[idx * BATCH_SIZE : (idx+1) * BATCH_SIZE], LAMBDA,
+        for _ in range(cfg.optim.critic_loop):
+            c_cnt, f_opt_state, f_loss_val = LSD_Learner.f_update( c_cnt, q_opt_state, f_opt_state, x_batch[idx * cfg.optim.batch_size : (idx+1) * cfg.optim.batch_size], cfg.optim.critic_l2,
                                                 q_apply_fun, f_apply_fun, q_get_params, f_get_params, f_opt_update, rngs[idx])
             idx += 1
         return t_cnt, c_cnt, q_opt_state, f_opt_state, q_loss_val, f_loss_val, rngs[idx]
 
     SAVE_PATH = r"params.bin"
     if not os.path.exists(SAVE_PATH):
-        _, q_init_params = q_init_fun(rng_q, (BATCH_SIZE, X_DIM))
-        _, f_init_params = f_init_fun(rng_f, (BATCH_SIZE, X_DIM))
+        _, q_init_params = q_init_fun(rng_q, (cfg.optim.batch_size, X_DIM))
+        _, f_init_params = f_init_fun(rng_f, (cfg.optim.batch_size, X_DIM))
     else:
         (q_init_params, f_init_params) = pickle.load(open(SAVE_PATH, "rb"))
         print("LODADED INIT WEIGHT")
     q_opt_state = q_opt_init(q_init_params)
     f_opt_state = f_opt_init(f_init_params)
-    x_record = None#jnp.zeros((bin_num, bin_num), dtype = jnp.uint32)
-    def update_x_record(x_record, x_batch):
-        if x_record is not None:
-            for x in x_batch:
-                xi0 = jnp.clip(((x[0] / HALF_BAND + 1.0) / 2.0 * bin_num).astype(jnp.int32), 0, bin_num - 1)
-                xi1 = jnp.clip(((x[1] / HALF_BAND + 1.0) / 2.0 * bin_num).astype(jnp.int32), 0, bin_num - 1)
-                x_record = jax.ops.index_add(x_record, jax.ops.index[xi0, xi1], 1)
-        return x_record
 
     t0 = time.time()
     t = c = 0
     q_loss_val = f_loss_val = 0.0
-    olds = f_get_params(f_opt_state)
-    while True:
+
+    while t < cfg.optim.loop_num:
         x_batch = sampler.sample()
-        x_record = update_x_record(x_record, x_batch)
 
         t, c, q_opt_state, f_opt_state, q_loss_val, f_loss_val, _rng \
             = update(t, c, q_opt_state, f_opt_state, x_batch, _rng)
 
         t1 = time.time()
         if t1 - t0 > 20.0:
-            news = f_get_params(f_opt_state)
-            print(  t,
-                    "{:.2f}".format(t1 - t0),
-                    "{:.6f}".format(q_loss_val),
-                    "{:.6f}".format(-f_loss_val),
-                    #net_maker.param_l2_norm(olds, news),
-                    )
-            olds = news
+            print_txt = ""
+            for txt in ["{}".format(t),
+                        "{:.2f}".format(t1 - t0),
+                        "{:.6f}".format(q_loss_val),
+                        "{:.6f}".format(-f_loss_val),
+                        ]:
+                if print_txt != "":
+                    print_txt += ","
+                print_txt += txt
+            print(print_txt)
+            with open("learn_log.txt", "a") as f:
+                f.write("{}".format(print_txt))
             t0 = t1
             save_map(   q_apply_fun, q_get_params(q_opt_state),
                         f_apply_fun, f_get_params(f_opt_state),
-                        x_record, sampler,
+                        sampler, cfg.data.half_band,
                         "map.png")
             pickle.dump((q_get_params(q_opt_state), f_get_params(f_opt_state)), open(SAVE_PATH, "wb"))
 
