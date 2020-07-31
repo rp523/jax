@@ -8,6 +8,7 @@ from ebm.toy_sampler import Sampler
 from ebm.lsd import LSD_Learner
 from model.maker.model_maker import net_maker
 import hydra
+from omegaconf import DictConfig
 
 SEED = 0
 X_DIM = 2
@@ -76,7 +77,7 @@ def save_map(   q_apply_fun, q_params,
     plt.savefig(save_path)
 
 @hydra.main(config_path="lsd_toy.yaml")
-def main(cfg):
+def main(cfg: DictConfig):
     print(cfg.pretty())
 
     _rng = jax.random.PRNGKey(SEED)
@@ -144,7 +145,7 @@ def main(cfg):
                 print_txt += txt
             print(print_txt)
             with open("learn_log.txt", "a") as f:
-                f.write("{}".format(print_txt))
+                f.write("{}\n".format(print_txt))
             t0 = t1
             save_map(   q_apply_fun, q_get_params(q_opt_state),
                         f_apply_fun, f_get_params(f_opt_state),

@@ -1,5 +1,5 @@
 optim:
-  lr: 1E-4
+  lr: 1E-5
   batch_size: 100
   critic_loop: 5
   critic_l2: 0.5
