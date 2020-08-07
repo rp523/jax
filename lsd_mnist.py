@@ -180,22 +180,25 @@ def fashion_test():
             "class_logit",
             ]
     #paths = ["exp/05_class_allclass"] * 2 + ["exp/03_joint_allclasses"] * 3
-    weight_paths = ["/home/isgsktyktt/work/multirun/2020-07-29/08-45-26/0", # classify
-                    "/home/isgsktyktt/work/multirun/2020-07-29/08-45-26/0", # classify
-                    "/home/isgsktyktt/work/multirun/2020-07-28/21-59-23/5", # joint
-                    "/home/isgsktyktt/work/multirun/2020-07-28/21-59-23/5", # joint
-                    "/home/isgsktyktt/work/multirun/2020-07-28/21-59-23/5", # joint
+    weight_paths = ["/home/isgsktyktt/work/multirun/2020-08-02/19-17-42/0", # classify
+                    "/home/isgsktyktt/work/multirun/2020-08-02/19-17-42/0", # classify
+                    "/home/isgsktyktt/work/multirun/2020-08-02/15-50-55/2", # joint
+                    "/home/isgsktyktt/work/multirun/2020-08-02/15-50-55/2", # joint
+                    "/home/isgsktyktt/work/multirun/2020-08-02/15-50-55/2", # joint
             ]
     rng = jax.random.PRNGKey(0)
-    mnist = Mnist(rng, 10000, "test", one_hot = False, dequantize = True, flatten = True, dir_path = ".")
-    fashion = FashionMnist(rng, 10000, "test", one_hot = False, dequantize = True, flatten = True, dir_path = ".")
-        
+    learned_mnist = Mnist(rng, 10000, "test", one_hot = False, dequantize = True, flatten = True, dir_path = ".", remove_classes = [0])
+    unlearned_mnist = Mnist(rng, 10000, "test", one_hot = False, dequantize = True, flatten = True, dir_path = ".", remove_classes = np.arange(1,10))
+    #fashion = FashionMnist(rng, 10000, "test", one_hot = False, dequantize = True, flatten = True, dir_path = ".")
+
     for i, (xlabel, key, weight_path) in enumerate(zip(titles, keys, weight_paths)):
         dummy = 0.0
         _, q_apply_fun_raw = jem(mlp(10), dummy, dummy)
         q_params, _ = pickle.load(open(os.path.join(weight_path, "params.bin"), "rb"))
-        mx, my = mnist.sample(get_all = True)
-        fx, fy = fashion.sample(get_all = True)
+        mx, my = learned_mnist.sample(get_all = True)
+        assert((my != 0).all())
+        fx, fy = unlearned_mnist.sample(get_all = True)
+        assert((fy == 0).all())
         my_pred_dict = q_apply_fun_raw(q_params, mx)
         fy_pred_dict = q_apply_fun_raw(q_params, fx)
         my_metrics = my_pred_dict[key].max(axis = -1)
@@ -215,7 +218,7 @@ def fashion_test():
             # y: correct rate of learned dataset
             y_val = 0.0
             if m_valid.any():
-                y_prd = all_my_pred[m_valid]
+                y_prd = all_my_pred[m_valid] + 1
                 y_ans = my[m_valid]
                 correct_rate = (y_prd == y_ans).sum() / my.size
                 y_val = correct_rate
@@ -239,7 +242,7 @@ def fashion_test():
     plt.ylabel("学習済画像のうち、学習済と判定＆正解できた割合", fontname = FONT)
     plt.legend(prop={"family":FONT})
     plt.title("未学習判定と正解率のトレードオフ", fontname = FONT)
-    plt.savefig("unk_graphs_.png")
+    plt.savefig("unk_graphs.png")
     plt.show()
 
 @hydra.main(config_path="lsd_mnist.yaml")
@@ -275,6 +278,11 @@ def main(cfg):
         x_batch, y_batch = arg_test_sampler.sample(get_all = True)
         pred_prob = q_apply_fun_classify(q_params, x_batch)
         pred_idx = jnp.argmax(pred_prob, axis = -1)# + 1
+        if cfg.data.remove_col_too:
+            for rem_val in cfg.data.remove_class:
+                add_idxs = jnp.where(pred_idx >= rem_val)[0]
+                if add_idxs.any():
+                    pred_idx = jax.ops.index_add(pred_idx, add_idxs, 1)
         return (y_batch == pred_idx).mean()
     def q_loss(q_params, f_params, x_batch, y_batch, rng):
         loss = 0.0
@@ -356,8 +364,8 @@ def main(cfg):
             if cnt / (60000 / cfg.optim.batch_size) > cfg.optim.epoch_num:
                 break
 
-    show_sample(train_class_num, q_opt_state, q_get_params, q_apply_fun_raw)
     return
+    show_sample(train_class_num, q_opt_state, q_get_params, q_apply_fun_raw)
     make_conf_mat(q_opt_state, q_get_params, q_apply_fun_raw, test_sampler)
 
 if __name__ == "__main__":

@@ -40,36 +40,11 @@ class LSD_Learner:
         return jnp.abs(lsd), f_norm
 
     @staticmethod
-    def __q_loss( q_params, f_params, x_batch,
-                arg_q_apply_fun, arg_f_apply_fun, rng):
-        lsd, _ =  LSD_Learner.calc_loss_metrics(q_params, f_params, x_batch,
-                                    arg_q_apply_fun, arg_f_apply_fun, rng)
-        return lsd
-
-    @staticmethod
     def f_loss( q_params, f_params, x_batch, l2_weight,
                 arg_q_apply_fun, arg_f_apply_fun, rng):
         lsd, f_norm =  LSD_Learner.calc_loss_metrics(   q_params, f_params, x_batch,
                                             arg_q_apply_fun, arg_f_apply_fun, rng)
         return -lsd + l2_weight * f_norm
-
-    @staticmethod
-    def q_update(   t_cnt, q_opt_state, f_opt_state, x_batch,
-                    arg_q_apply_fun, arg_f_apply_fun, arg_q_get_params, arg_f_get_params, arg_q_opt_update, rng):
-        q_params = arg_q_get_params(q_opt_state)
-        f_params = arg_f_get_params(f_opt_state)
-        loss_val, grad_val = jax.value_and_grad(LSD_Learner.__q_loss, argnums = 0)(q_params, f_params, x_batch, arg_q_apply_fun, arg_f_apply_fun, rng)
-        q_opt_state = arg_q_opt_update(t_cnt, grad_val, q_opt_state)
-        return q_opt_state, loss_val
-
-    @staticmethod
-    def f_update(c_cnt, q_opt_state, f_opt_state, x_batch, l2_weight,
-                    arg_q_apply_fun, arg_f_apply_fun, arg_q_get_params, arg_f_get_params, arg_f_opt_update, rng):
-        q_params = arg_q_get_params(q_opt_state)
-        f_params = arg_f_get_params(f_opt_state)
-        loss_val, grad_val = jax.value_and_grad(LSD_Learner.f_loss, argnums = 1)(q_params, f_params, x_batch, l2_weight, arg_q_apply_fun, arg_f_apply_fun, rng)
-        f_opt_state = arg_f_opt_update(c_cnt, grad_val, f_opt_state)
-        return (c_cnt + 1), f_opt_state, loss_val
         
     @staticmethod
     def gaussian_net(base_net, init_mu, init_sigma):
