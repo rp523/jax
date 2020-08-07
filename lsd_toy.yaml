@@ -2,7 +2,7 @@ optim:
   lr: 1E-5
   batch_size: 100
   critic_loop: 5
-  critic_l2: 0.5
+  critic_l2: 10.0
   loop_num: 99999
 data:
   half_band: 5.0

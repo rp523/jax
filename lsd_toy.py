@@ -94,7 +94,25 @@ def main(cfg: DictConfig):
         optimizers.adam(cfg.optim.lr)
     f_opt_init, f_opt_update, f_get_params = \
         optimizers.adam(cfg.optim.lr)
-
+    def q_loss( q_params, f_params, x_batch,
+                arg_q_apply_fun, arg_f_apply_fun, rng):
+        lsd, _ =  LSD_Learner.calc_loss_metrics(q_params, f_params, x_batch,
+                                    arg_q_apply_fun, arg_f_apply_fun, rng)
+        return lsd
+    def q_update(   t_cnt, q_opt_state, f_opt_state, x_batch,
+                    arg_q_apply_fun, arg_f_apply_fun, arg_q_get_params, arg_f_get_params, arg_q_opt_update, rng):
+        q_params = arg_q_get_params(q_opt_state)
+        f_params = arg_f_get_params(f_opt_state)
+        loss_val, grad_val = jax.value_and_grad(q_loss, argnums = 0)(q_params, f_params, x_batch, arg_q_apply_fun, arg_f_apply_fun, rng)
+        q_opt_state = arg_q_opt_update(t_cnt, grad_val, q_opt_state)
+        return q_opt_state, loss_val
+    def f_update(c_cnt, q_opt_state, f_opt_state, x_batch, l2_weight,
+                    arg_q_apply_fun, arg_f_apply_fun, arg_q_get_params, arg_f_get_params, arg_f_opt_update, rng):
+        q_params = arg_q_get_params(q_opt_state)
+        f_params = arg_f_get_params(f_opt_state)
+        loss_val, grad_val = jax.value_and_grad(LSD_Learner.f_loss, argnums = 1)(q_params, f_params, x_batch, l2_weight, arg_q_apply_fun, arg_f_apply_fun, rng)
+        f_opt_state = arg_f_opt_update(c_cnt, grad_val, f_opt_state)
+        return (c_cnt + 1), f_opt_state, loss_val
     @jax.jit
     def update( t_cnt, c_cnt,
                 q_opt_state, f_opt_state, x_batch,
@@ -102,12 +120,12 @@ def main(cfg: DictConfig):
         idx = 0
 
         rngs = jax.random.split(rng, (1 + cfg.optim.critic_loop) + 1)
-        q_opt_state, q_loss_val = LSD_Learner.q_update(t_cnt, q_opt_state, f_opt_state, x_batch[idx * cfg.optim.batch_size : (idx+1) * cfg.optim.batch_size],
+        q_opt_state, q_loss_val = q_update(t_cnt, q_opt_state, f_opt_state, x_batch[idx * cfg.optim.batch_size : (idx+1) * cfg.optim.batch_size],
                                                 q_apply_fun, f_apply_fun, q_get_params, f_get_params, q_opt_update, rngs[idx])
         idx += 1
         t_cnt += 1
         for _ in range(cfg.optim.critic_loop):
-            c_cnt, f_opt_state, f_loss_val = LSD_Learner.f_update( c_cnt, q_opt_state, f_opt_state, x_batch[idx * cfg.optim.batch_size : (idx+1) * cfg.optim.batch_size], cfg.optim.critic_l2,
+            c_cnt, f_opt_state, f_loss_val = f_update( c_cnt, q_opt_state, f_opt_state, x_batch[idx * cfg.optim.batch_size : (idx+1) * cfg.optim.batch_size], cfg.optim.critic_l2,
                                                 q_apply_fun, f_apply_fun, q_get_params, f_get_params, f_opt_update, rngs[idx])
             idx += 1
         return t_cnt, c_cnt, q_opt_state, f_opt_state, q_loss_val, f_loss_val, rngs[idx]
