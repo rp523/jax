@@ -1,8 +1,10 @@
 optim:
   seed: 0
   batch_size: 128
-  lr: 1E-3
+  lr: 1E-4
   focal_gamma: 2.0
   epoch_num: 2000
+  burnin_epoch: 1000
   log_sec: 20.0
   weight_name: "params.bin"
+  loss_type: "dili_ce"
