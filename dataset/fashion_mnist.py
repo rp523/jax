@@ -34,7 +34,7 @@ class FashionMnist:
             with gzip.open(file_path, 'rb') as f:
                 data = np.frombuffer(f.read(), np.uint8)
                 if key.find("img") >= 0:
-                    data = data[16:].reshape((-1, 28, 28))
+                    data = data[16:].reshape((-1, 28, 28, 1))
                     if dequantize:
                         self.__rng, _rng = jax.random.split(self.__rng)
                         data = FashionMnist.dequantize(_rng, data)
