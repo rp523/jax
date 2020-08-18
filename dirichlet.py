@@ -5,8 +5,10 @@ import jax
 import jax.numpy as jnp
 from jax.experimental.stax import serial, parallel, Dense, Tanh, Conv, Flatten, FanOut, FanInSum, Identity
 from jax.experimental.optimizers import adam
+from jax.scipy.special import gammaln, digamma
 import hydra
 from dataset.mnist import Mnist
+from model.maker.model_maker import net_maker
 
 def Swish():
     def init_fun(rng, input_shape):
@@ -37,9 +39,6 @@ def nn(class_num):
                     Dense(100), Tanh,
                     Dense(class_num)
                     )
-def digamma(x):
-    return jax.scipy.special.digamma(x)
-
 @hydra.main("dirichlet.yaml")
 def main(cfg):
     print(cfg.pretty())
@@ -48,6 +47,7 @@ def main(cfg):
     lr = cfg.optim.lr
     focal_gamma = cfg.optim.focal_gamma
     epoch_num = cfg.optim.epoch_num
+    weight_decay_rate = cfg.optim.weight_decay_rate
     burnin_epoch = cfg.optim.burnin_epoch
     log_sec = cfg.optim.log_sec
     weight_name = cfg.optim.weight_name
@@ -72,11 +72,13 @@ def main(cfg):
         y_pred = apply_fun(params, x)
         y_pred = jax.nn.softmax(y_pred)
         ce = (- y * ((1.0 - y_pred) ** focal_gamma) * jnp.log(y_pred + 1E-10)).sum(axis = -1).mean()
-        return ce
+        loss = ce
+        loss += weight_decay_rate * net_maker.weight_decay(params)
+        return loss
     def kl_to_ones(y, alpha):
         alpha_ = y + (1.0 - y) * alpha
         s_ = alpha_.sum(axis = -1, keepdims = True)
-        t1 = jax.scipy.special.gammaln(s_).sum(axis = -1)
+        t1 = gammaln(s_).sum(axis = -1)
         t2 = -(jnp.log(alpha_)).sum(axis = -1)
         t3 = ((alpha_ - 1.0) * (digamma(alpha_) - digamma(s_))).sum(axis = -1)
         kl = (t1 + t2 + t3).mean()
@@ -87,14 +89,18 @@ def main(cfg):
         s = alpha.sum(axis = -1, keepdims = True)
         p = alpha / s
         loss = ((y - p) ** 2 + p * (1.0 - p) / (s + 1.0)).sum(axis = -1).mean()
-        return loss + prio_weight * kl_to_ones(y, alpha)
+        loss += weight_decay_rate * net_maker.weight_decay(params)
+        loss += prio_weight * kl_to_ones(y, alpha)
+        return loss
     def dirichlet_ce_loss(params, x, y, prio_weight):
         y_pred = apply_fun(params, x)
         alpha = jnp.exp(y_pred)
         s = alpha.sum(axis = -1, keepdims = True)
         loss = y * (digamma(s) - digamma(alpha))
         loss = loss.sum(axis = -1).mean()
-        return loss + prio_weight * kl_to_ones(y, alpha)
+        loss += weight_decay_rate * net_maker.weight_decay(params)
+        loss += prio_weight * kl_to_ones(y, alpha)
+        return loss
     @jax.jit
     def update(idx, opt_state, x, y, prio_weight):
         params = get_params(opt_state)
