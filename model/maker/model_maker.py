@@ -1,5 +1,6 @@
 #coding: utf-8
 import jax.random as jrandom
+import jax.numpy as jnp
 
 class net_maker():
     
@@ -52,6 +53,17 @@ class net_maker():
                 ret += net_maker.weight_decay(param)
         else:
             ret += (params ** 2).sum()
+        return ret
+
+    @staticmethod    
+    def isnan_params(params):
+        ret = False
+        if isinstance(params, list) or isinstance(params, tuple):
+            params = list(params)
+            for param in params:
+                ret &= net_maker.isnan_params(param)
+        else:
+            ret = jnp.isnan(params).any()
         return ret
 
     @staticmethod    

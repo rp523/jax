@@ -110,8 +110,11 @@ def main(cfg):
             loss_val, grad_val = jax.value_and_grad(dirichlet_l2_loss)(params, x, y, prio_weight)
         else:
             loss_val, grad_val = jax.value_and_grad(ce_loss)(params, x, y)
-        opt_state = opt_update(idx, grad_val, opt_state)
-        return (idx + 1), loss_val, opt_state
+        isnan_grad = net_maker.isnan_params(grad_val)
+        if not isnan_grad is False:
+            idx = idx + 1
+            opt_state = opt_update(idx, grad_val, opt_state)
+        return idx, loss_val, opt_state, isnan_grad
     
     proc_epoch = 0.0
     idx = 0
@@ -121,31 +124,32 @@ def main(cfg):
     while True:
         prio_weight = min(1.0, proc_epoch / burnin_epoch)
         x, y = train.sample()
-        idx, loss_val, opt_state = update(idx, opt_state, x, y, prio_weight)
-        run_loss += loss_val
-        run_cnt += 1
-        proc_epoch += (batch_size / 60000)
-        t1 = time.time()
-        if ((t1 - t0 > log_sec) or (proc_epoch > epoch_num)) and (run_cnt > 0):
-            x, y = test.sample(get_all = True)
-            log_txt = ""
-            for t, txt in enumerate(["epoch={:.2f}".format(proc_epoch),
-                                    "loop={}".format(idx),
-                                    "loss={:.3f}".format(run_loss / run_cnt),
-                                    "acc={:.2f}%".format(accuracy(opt_state, x, y) * 100),
-                                    ]):
-                if t > 0:
-                    log_txt += ","
-                log_txt += txt
-            pickle.dump(get_params(opt_state), open(weight_name, "wb"))
-            with open("log.txt", "a") as f:
-                f.write("{}\n".format(log_txt))
-            print(log_txt)
-            run_loss = 0.0
-            run_cnt = 0
-            t0 = t1
-        if proc_epoch > epoch_num:
-            break
+        idx, loss_val, opt_state, isnan_grad = update(idx, opt_state, x, y, prio_weight)
+        if isnan_grad == False:
+            run_loss += loss_val
+            run_cnt += 1
+            proc_epoch += (batch_size / 60000)
+            t1 = time.time()
+            if ((t1 - t0 > log_sec) or (proc_epoch > epoch_num)) and (run_cnt > 0):
+                x, y = test.sample(get_all = True)
+                log_txt = ""
+                for t, txt in enumerate(["epoch={:.2f}".format(proc_epoch),
+                                        "loop={}".format(idx),
+                                        "loss={:.3f}".format(run_loss / run_cnt),
+                                        "acc={:.2f}%".format(accuracy(opt_state, x, y) * 100),
+                                        ]):
+                    if t > 0:
+                        log_txt += ","
+                    log_txt += txt
+                pickle.dump(get_params(opt_state), open(weight_name, "wb"))
+                with open("log.txt", "a") as f:
+                    f.write("{}\n".format(log_txt))
+                print(log_txt)
+                run_loss = 0.0
+                run_cnt = 0
+                t0 = t1
+            if proc_epoch > epoch_num:
+                break
 
 if __name__ == "__main__":
     main()
