@@ -111,9 +111,20 @@ def main(cfg):
         else:
             loss_val, grad_val = jax.value_and_grad(ce_loss)(params, x, y)
         isnan_grad = net_maker.isnan_params(grad_val)
-        if not isnan_grad is False:
-            idx = idx + 1
-            opt_state = opt_update(idx, grad_val, opt_state)
+        isnan_loss = jnp.isnan(loss_val)
+        isnan_flg  = jnp.logical_or(isnan_grad, isnan_loss)
+        def valid_update_fun(state):
+            grad_val, opt_state = state
+            return opt_update(idx, grad_val, opt_state)
+        def invalid_update_fun(state):
+            grad_val, opt_state = state
+            return opt_state
+        def valid_incr_fun(idx):
+            return idx + 1
+        def invalid_incr_fun(idx):
+            return idx
+        opt_state = jax.lax.cond(isnan_flg, invalid_update_fun, valid_update_fun, (grad_val, opt_state))
+        idx       = jax.lax.cond(isnan_flg, invalid_incr_fun,   valid_incr_fun,   idx)
         return idx, loss_val, opt_state, isnan_grad
     
     proc_epoch = 0.0
@@ -125,7 +136,7 @@ def main(cfg):
         prio_weight = min(1.0, proc_epoch / burnin_epoch)
         x, y = train.sample()
         idx, loss_val, opt_state, isnan_grad = update(idx, opt_state, x, y, prio_weight)
-        if isnan_grad == False:
+        if jnp.logical_not(isnan_grad):
             run_loss += loss_val
             run_cnt += 1
             proc_epoch += (batch_size / 60000)
