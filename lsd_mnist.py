@@ -245,6 +245,61 @@ def fashion_test():
     plt.savefig("unk_graphs.png")
     plt.show()
 
+def distri_test():
+    weight_path = "/home/isgsktyktt/work/multirun/2020-08-18/21-52-27/0" # joint
+    rng = jax.random.PRNGKey(0)
+    learned_mnist = Mnist(  rng, 10000, "test", one_hot = False, dequantize = True, flatten = True, dir_path = ".", remove_classes = [0])
+    unlearned_mnist = Mnist(rng, 10000, "test", one_hot = False, dequantize = True, flatten = True, dir_path = ".", remove_classes = np.arange(1,10))
+    fashion = FashionMnist( rng, 10000, "test", one_hot = False, dequantize = True, flatten = True, dir_path = ".")
+
+    _, q_apply_fun_raw = jem(mlp(9), 0, 1)
+    q_params, _ = pickle.load(open(os.path.join(weight_path, "params.bin"), "rb"))
+    lmx, lmy = learned_mnist.sample(get_all = True)
+    assert((lmy != 0).all())
+    umx, umy = unlearned_mnist.sample(get_all = True)
+    assert((umy == 0).all())
+    fax, fay = fashion.sample(get_all = True)
+    lmy_pred_dict = q_apply_fun_raw(q_params, lmx)
+    umy_pred_dict = q_apply_fun_raw(q_params, umx)
+    fay_pred_dict = q_apply_fun_raw(q_params, fax)
+
+    split_num = 1000
+    for key in ["log_density"]:
+        lmy_pred = lmy_pred_dict[key]
+        umy_pred = umy_pred_dict[key]
+        fay_pred = fay_pred_dict[key]
+
+        x   = np.zeros(split_num)
+        lmp = np.zeros(split_num)
+        ump = np.zeros(split_num)
+        fap = np.zeros(split_num)
+        min_val = min(lmy_pred.min(), umy_pred.min(), fay_pred.min())
+        max_val = min(lmy_pred.max(), umy_pred.max(), fay_pred.max())
+        splits = np.linspace(min_val, max_val, split_num + 1)
+        for i in range(splits.size - 1):
+            v0 = splits[i]
+            v1 = splits[i + 1]
+
+            x[i] = 0.5 * (v0 + v1)
+            lmp[i] = np.logical_and(v0 <= lmy_pred, lmy_pred < v1).sum() / lmy_pred.size
+            ump[i] = np.logical_and(v0 <= umy_pred, umy_pred < v1).sum() / umy_pred.size
+            fap[i] = np.logical_and(v0 <= fay_pred, fay_pred < v1).sum() / fay_pred.size
+        
+        plt.clf()
+        plt.plot(x, lmp, label = "学習済")
+        plt.plot(x, ump, label = "未学習だが学習済と類似")
+        plt.plot(x, fap, label = "未学習かつ学習済と全く異なる")
+        plt.xlim(-1200, max_val)
+        plt.ylim(0)
+    
+        FONT = "Myrica M"
+        plt.xlabel("C*log(周辺尤度)", fontname = FONT)
+        plt.ylabel("頻度", fontname = FONT)
+        plt.legend(prop={"family":FONT})
+        plt.title("画像グループごとの尤度分布", fontname = FONT)
+        plt.savefig("distri.png")
+        plt.show()
+
 @hydra.main(config_path="lsd_mnist.yaml")
 def main(cfg):
     print(cfg.pretty())
@@ -370,5 +425,6 @@ def main(cfg):
 
 if __name__ == "__main__":
     #fashion_test()
+    #distri_test()
     main()
     print("Done.")
