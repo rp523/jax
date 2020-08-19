@@ -52,13 +52,15 @@ def main(cfg):
     log_sec = cfg.optim.log_sec
     weight_name = cfg.optim.weight_name
     loss_type = cfg.optim.loss_type
+    remove_class = cfg.data.remove_class
+    remove_col_too = cfg.data.remove_col_too
 
-    init_fun, apply_fun = nn(10)
+    init_fun, apply_fun = nn(10 - int(remove_col_too) * len(remove_class))
     rng = jax.random.PRNGKey(seed)
 
     rng_train, rng_test, rng_param, rng = jax.random.split(rng, 4)
-    train = Mnist(rng_train, batch_size, "train", one_hot =  True, dequantize = True, flatten = False, dir_path = hydra.utils.get_original_cwd())
-    test  = Mnist( rng_test,          1,  "test", one_hot = False, dequantize = True, flatten = False, dir_path = hydra.utils.get_original_cwd())
+    train = Mnist(rng_train, batch_size, "train", one_hot =  True, dequantize = True, flatten = False, dir_path = hydra.utils.get_original_cwd(), remove_classes = remove_class, remove_col_too = remove_col_too)
+    test  = Mnist(rng_test,           1,  "test", one_hot = False, dequantize = True, flatten = False, dir_path = hydra.utils.get_original_cwd(), remove_classes = remove_class, remove_col_too = remove_col_too)
     opt_init, opt_update, get_params = adam(lr)
     input_shape = (batch_size, 28, 28, 1)
     _, init_params = init_fun(rng_param, input_shape)
@@ -66,8 +68,13 @@ def main(cfg):
 
     def accuracy(opt_state, x, y):
         params = get_params(opt_state)
-        y_pred = apply_fun(params, x).argmax(axis = -1)
-        return (y == y_pred).mean()
+        y_pred_idx = apply_fun(params, x).argmax(axis = -1) + int(remove_col_too)
+        if remove_col_too:
+            for rem_val in remove_class:
+                add_idxs = jnp.where(y_pred_idx >= rem_val)[0]
+                if add_idxs.any():
+                    pred_idx = jax.ops.index_add(y_pred_idx, add_idxs, 1)
+        return (y == y_pred_idx).mean()
     def ce_loss(params, x, y):
         y_pred = apply_fun(params, x)
         y_pred = jax.nn.softmax(y_pred)

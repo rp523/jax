@@ -9,3 +9,6 @@ optim:
   log_sec: 20.0
   weight_name: "params.bin"
   loss_type: "dili_l2"
+data:
+  remove_class: []
+  remove_col_too: False
