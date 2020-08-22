@@ -52,13 +52,15 @@ def main(cfg):
     log_sec = cfg.optim.log_sec
     weight_name = cfg.optim.weight_name
     loss_type = cfg.optim.loss_type
+    remove_class = cfg.data.remove_class
+    remove_col_too = cfg.data.remove_col_too
 
-    init_fun, apply_fun = nn(10)
+    init_fun, apply_fun = nn(10 - int(remove_col_too) * len(remove_class))
     rng = jax.random.PRNGKey(seed)
 
     rng_train, rng_test, rng_param, rng = jax.random.split(rng, 4)
-    train = Mnist(rng_train, batch_size, "train", one_hot =  True, dequantize = True, flatten = False, dir_path = hydra.utils.get_original_cwd())
-    test  = Mnist( rng_test,          1,  "test", one_hot = False, dequantize = True, flatten = False, dir_path = hydra.utils.get_original_cwd())
+    train = Mnist(rng_train, batch_size, "train", one_hot =  True, dequantize = True, flatten = False, dir_path = hydra.utils.get_original_cwd(), remove_classes = remove_class, remove_col_too = remove_col_too)
+    test  = Mnist(rng_test,           1,  "test", one_hot = False, dequantize = True, flatten = False, dir_path = hydra.utils.get_original_cwd(), remove_classes = remove_class, remove_col_too = remove_col_too)
     opt_init, opt_update, get_params = adam(lr)
     input_shape = (batch_size, 28, 28, 1)
     _, init_params = init_fun(rng_param, input_shape)
@@ -66,8 +68,13 @@ def main(cfg):
 
     def accuracy(opt_state, x, y):
         params = get_params(opt_state)
-        y_pred = apply_fun(params, x).argmax(axis = -1)
-        return (y == y_pred).mean()
+        y_pred_idx = apply_fun(params, x).argmax(axis = -1) + int(remove_col_too)
+        if remove_col_too:
+            for rem_val in remove_class:
+                add_idxs = jnp.where(y_pred_idx >= rem_val)[0]
+                if add_idxs.any():
+                    pred_idx = jax.ops.index_add(y_pred_idx, add_idxs, 1)
+        return (y == y_pred_idx).mean()
     def ce_loss(params, x, y):
         y_pred = apply_fun(params, x)
         y_pred = jax.nn.softmax(y_pred)
@@ -111,9 +118,20 @@ def main(cfg):
         else:
             loss_val, grad_val = jax.value_and_grad(ce_loss)(params, x, y)
         isnan_grad = net_maker.isnan_params(grad_val)
-        if not isnan_grad is False:
-            idx = idx + 1
-            opt_state = opt_update(idx, grad_val, opt_state)
+        isnan_loss = jnp.isnan(loss_val)
+        isnan_flg  = jnp.logical_or(isnan_grad, isnan_loss)
+        def valid_update_fun(state):
+            grad_val, opt_state = state
+            return opt_update(idx, grad_val, opt_state)
+        def invalid_update_fun(state):
+            grad_val, opt_state = state
+            return opt_state
+        def valid_incr_fun(idx):
+            return idx + 1
+        def invalid_incr_fun(idx):
+            return idx
+        opt_state = jax.lax.cond(isnan_flg, invalid_update_fun, valid_update_fun, (grad_val, opt_state))
+        idx       = jax.lax.cond(isnan_flg, invalid_incr_fun,   valid_incr_fun,   idx)
         return idx, loss_val, opt_state, isnan_grad
     
     proc_epoch = 0.0
@@ -125,7 +143,7 @@ def main(cfg):
         prio_weight = min(1.0, proc_epoch / burnin_epoch)
         x, y = train.sample()
         idx, loss_val, opt_state, isnan_grad = update(idx, opt_state, x, y, prio_weight)
-        if isnan_grad == False:
+        if jnp.logical_not(isnan_grad):
             run_loss += loss_val
             run_cnt += 1
             proc_epoch += (batch_size / 60000)

@@ -4,8 +4,11 @@ optim:
   lr: 1E-4
   weight_decay_rate: 1E-4
   focal_gamma: 2.0
-  epoch_num: 2000
-  burnin_epoch: 1000
+  epoch_num: 1000
+  burnin_epoch: 500
   log_sec: 20.0
   weight_name: "params.bin"
-  loss_type: "dili_ce"
+  loss_type: "dili_l2"
+data:
+  remove_class: []
+  remove_col_too: False
