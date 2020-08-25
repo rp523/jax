@@ -1,12 +1,3 @@
-model/maker/__pycache__/model_maker.cpython-37.pyc
-model/maker/__pycache__/__init__.cpython-37.pyc
-model/__pycache__/__init__.cpython-37.pyc
-dataset/__pycache__/cityscapes.cpython-37.pyc
-__pycache__/checkpoint.cpython-37.pyc
-ebm/__pycache__/sampler.cpython-37.pyc
+*.pyc
+*.bak
 test.py
-ebm/sampler.py.bak
-ebm/__pycache__/toy_sampler.cpython-37.pyc
-ebm/__pycache__/lsd.cpython-37.pyc
-dataset/__pycache__/__init__.cpython-37.pyc
-dataset/__pycache__/mnist.cpython-37.pyc
