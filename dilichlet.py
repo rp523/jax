@@ -180,7 +180,7 @@ def show_curve():
             print(graph_path)
             plt.savefig(graph_path)
 
-@hydra.main("dirichlet.yaml")
+@hydra.main("dilichlet.yaml")
 def main(cfg):
     print(cfg.pretty())
     seed = cfg.optim.seed
