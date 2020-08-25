@@ -1,11 +1,14 @@
+model:
+  last: "relu"
 optim:
   seed: 0
   batch_size: 128
   lr: 1E-4
-  weight_decay_rate: 1E-4
+  weight_decay_rate: 1E-5
   focal_gamma: 2.0
   epoch_num: 1000
   burnin_epoch: 500
+  kl_weight: 1.0
   log_sec: 20.0
   weight_name: "params.bin"
   loss_type: "dili_l2"
