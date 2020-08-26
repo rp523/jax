@@ -28,17 +28,14 @@ def Swish():
 def SkipDense(unit_num):
     return serial(FanOut(2), parallel(Dense(unit_num), Identity), FanInSum)
 def nn(class_num):
-    return serial(  Flatten,
-                    Dense(300), Swish(),
-                    SkipDense(300), Swish(),
-                    SkipDense(300), Swish(),
-                    Dense(class_num)
-                    )
-    return serial(  Conv(16, (7, 7), (2, 2), 'VALID'), Tanh,
-                    Conv(32, (3, 3), (2, 2), 'VALID'), Tanh,
-                    Conv(64, (3, 3), (2, 2), 'VALID'), Tanh,
+    return serial(  Conv(16, (7, 7), (2, 2), "SAME"), Tanh,
+                    Conv(32, (3, 3), (1, 1), "SAME"), Tanh,
+                    Conv(32, (3, 3), (2, 2), "SAME"), Tanh,
+                    Conv(64, (3, 3), (1, 1), "SAME"), Tanh,
+                    Conv(64, (3, 3), (2, 2), "SAME"), Tanh,
                     Flatten,
-                    Dense(100), Tanh,
+                    Dense(128), Swish(),
+                    Dense(128), Swish(),
                     Dense(class_num)
                     )
 
@@ -53,7 +50,7 @@ def show_curve():
 
     point_num = 100
     _, apply_fun = nn(9)
-    classify_weight_path = "/home/isgsktyktt/work/outputs/2020-08-24/00-45-30/params.bin"
+    classify_weight_path = "/home/isgsktyktt/work/multirun/dilichlet/8/params.bin"
     classify_params = pickle.load(open(classify_weight_path, "rb"))
 
     # dataset loop
@@ -62,10 +59,10 @@ def show_curve():
         # model loop
         for loss_type, last_layer, weight_path in zip(
                                                 [
-                                                    "dilichlet_cross_entropy",
-                                                    "dilichlet_cross_entropy",
                                                     "dilichlet_L2",
                                                     "dilichlet_L2",
+                                                    "dilichlet_cross_entropy",
+                                                    "dilichlet_cross_entropy",
                                                 ],
                                                 [
                                                     "softmax",
@@ -74,10 +71,10 @@ def show_curve():
                                                     "relu",
                                                 ],
                                                 [
-                                                    "/home/isgsktyktt/work/multirun/2020-08-24/01-08-41/4/params.bin",
-                                                    "/home/isgsktyktt/work/multirun/2020-08-24/01-08-41/5/params.bin",
-                                                    "/home/isgsktyktt/work/multirun/2020-08-24/01-08-41/14/params.bin",
-                                                    "/home/isgsktyktt/work/multirun/2020-08-24/01-08-41/15/params.bin",
+                                                    "/home/isgsktyktt/work/multirun/dilichlet/0/params.bin",
+                                                    "/home/isgsktyktt/work/multirun/dilichlet/2/params.bin",
+                                                    "/home/isgsktyktt/work/multirun/dilichlet/4/params.bin",
+                                                    "/home/isgsktyktt/work/multirun/dilichlet/6/params.bin",
                                                 ]
                                                 ):
             params = pickle.load(open(weight_path, "rb"))
@@ -151,6 +148,8 @@ def show_curve():
                                                 ]:
                     if (model_type == "") and (metric_name == "evidence"):
                         continue
+                    if (model_type == "dilichlet_") and (metric_name in ["logit", "softmax"]):
+                        continue
                     metric_idx = (np.linspace(0.0, 1.0, point_num) * (l_metric.size + u_metric.size - 1)).astype(np.int)
                     metric_vec = (np.sort(np.append(l_metric, u_metric)))[metric_idx]
                     plot_x = np.zeros(metric_vec.shape)
@@ -201,8 +200,12 @@ def main(cfg):
     rng = jax.random.PRNGKey(seed)
 
     rng_train, rng_test, rng_param, rng = jax.random.split(rng, 4)
-    train = Mnist(rng_train, batch_size, "train", one_hot =  True, dequantize = True, flatten = False, dir_path = hydra.utils.get_original_cwd(), remove_classes = remove_class, remove_col_too = remove_col_too)
-    test  = Mnist(rng_test,           1,  "test", one_hot = False, dequantize = True, flatten = False, dir_path = hydra.utils.get_original_cwd(), remove_classes = remove_class, remove_col_too = remove_col_too)
+    train  = Mnist(rng_train, batch_size, "train", one_hot =  True, dequantize = True, flatten = False, dir_path = hydra.utils.get_original_cwd(), remove_classes = remove_class, remove_col_too = remove_col_too)
+    test   = Mnist(rng_test,           1,  "test", one_hot = False, dequantize = True, flatten = False, dir_path = hydra.utils.get_original_cwd(), remove_classes = remove_class, remove_col_too = remove_col_too)
+    _train = Mnist(rng_train, batch_size, "train", one_hot = False, dequantize = True, flatten = False, dir_path = hydra.utils.get_original_cwd(), remove_classes = remove_class, remove_col_too = remove_col_too)
+    for rem in remove_class:
+        assert((np.array(_train.sample(get_all = True)[1]) != rem).all())
+        assert((np.array(  test.sample(get_all = True)[1]) != rem).all())
     opt_init, opt_update, get_params = adam(lr)
     input_shape = (batch_size, 28, 28, 1)
     _, init_params = init_fun(rng_param, input_shape)
@@ -237,6 +240,7 @@ def main(cfg):
         if cfg.model.last == "softmax":
             # the same achitecture as conventional ones
             alpha = jnp.exp(y_pred)
+            alpha = jnp.maximum(alpha, 1E-10)
         elif cfg.model.last == "relu":
             # paper-written
             evidence = jax.nn.relu(y_pred)
@@ -325,6 +329,6 @@ def main(cfg):
                 break
 
 if __name__ == "__main__":
-    #show_curve()
-    main()
+    show_curve()
+    #main()
     print("Done.")
