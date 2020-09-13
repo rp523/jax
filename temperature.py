@@ -36,7 +36,7 @@ def nn(class_num):
                     Flatten,
                     Dense(128), Swish(),
                     Dense(128), Swish(),
-                    Dense(class_num)
+                    Dense(class_num + 1)
                     )
 
 def show_curve():
@@ -59,19 +59,21 @@ def show_curve():
         # model loop
         for loss_type, last_layer, weight_path in zip(
                                                 [
-                                                    "dilichlet_L2",
+                                                    "_",
+                                                    "_",
                                                     #"dilichlet_L2",
                                                     #"dilichlet_cross_entropy",
                                                     #"dilichlet_cross_entropy",
                                                 ],
                                                 [
-                                                    "softmax_evidence",
+                                                    "beta",
                                                     #"relu",
-                                                    #"softmax",
+                                                    "softmax",
                                                     #"relu",
                                                 ],
                                                 [
-                                                    "/home/isgsktyktt/work/multirun/fx_evidence/0/params.bin",
+                                                    "/home/isgsktyktt/work/multirun/2020-09-07/01-50-13/0/params.bin",
+                                                    "/home/isgsktyktt/work/multirun/2020-09-07/01-50-13/0/params.bin",
                                                     #"/home/isgsktyktt/work/multirun/dilichlet/2/params.bin",
                                                     #"/home/isgsktyktt/work/multirun/dilichlet/4/params.bin",
                                                     #"/home/isgsktyktt/work/multirun/dilichlet/6/params.bin",
@@ -82,33 +84,20 @@ def show_curve():
             learned_x,   learned_y   = learned_mnist.sample(get_all = True)
             unlearned_x, unlearned_y = unlearned_data.sample(get_all = True)
 
-            learned_logit   = apply_fun(params, learned_x  )
-            unlearned_logit = apply_fun(params, unlearned_x)
+            learned_logit   = apply_fun(params, learned_x  )[:,:-1]
+            unlearned_logit = apply_fun(params, unlearned_x)[:,:-1]
             classify_learned_logit   = apply_fun(classify_params, learned_x  )
             classify_unlearned_logit = apply_fun(classify_params, unlearned_x)
 
             classify_learned_softmax   = jax.nn.softmax(classify_learned_logit  )
             classify_unlearned_softmax = jax.nn.softmax(classify_unlearned_logit)
 
-            if last_layer == "softmax":
-                learned_alpha   = jnp.exp(  learned_logit)
-                unlearned_alpha = jnp.exp(unlearned_logit)
-                learned_softmax   = jax.nn.softmax(learned_logit)
-                unlearned_softmax = jax.nn.softmax(unlearned_logit)
-            elif last_layer == "relu":
-                learned_alpha   = jax.nn.relu(learned_logit  ) + 1.0
-                unlearned_alpha = jax.nn.relu(unlearned_logit) + 1.0
-                learned_softmax    = learned_alpha   / learned_alpha.sum(  axis = -1, keepdims = True)
-                unlearned_softmax  = unlearned_alpha / unlearned_alpha.sum(axis = -1, keepdims = True)
-            elif last_layer == "softmax_evidence":
-                learned_alpha   = jnp.exp(learned_logit  ) + 1.0
-                unlearned_alpha = jnp.exp(unlearned_logit) + 1.0
-                learned_softmax    = learned_alpha   / learned_alpha.sum(  axis = -1, keepdims = True)
-                unlearned_softmax  = unlearned_alpha / unlearned_alpha.sum(axis = -1, keepdims = True)
-            else:
-                assert(0)
-            learned_certainty   = learned_alpha.sum(  axis = -1)
-            unlearned_certainty = unlearned_alpha.sum(axis = -1)
+            learned_certainty   = apply_fun(params, learned_x  )[:,-1].reshape((-1, 1))
+            unlearned_certainty = apply_fun(params, unlearned_x)[:,-1].reshape((-1, 1))
+            learned_softmax   = jax.nn.softmax(learned_logit   * learned_certainty)
+            unlearned_softmax = jax.nn.softmax(unlearned_logit * unlearned_certainty)
+            learned_certainty = learned_certainty.flatten()
+            unlearned_certainty = unlearned_certainty.flatten()
             learned_argmax          = learned_logit.argmax(         axis = -1) + 1
             classify_learned_argmax = classify_learned_logit.argmax(axis = -1) + 1
             
@@ -153,7 +142,7 @@ def show_curve():
                                                 ]:
                     if (model_type == "") and (metric_name == "evidence"):
                         continue
-                    if (model_type == "dilichlet_") and (metric_name in ["logit", "softmax"]):
+                    if (model_type == "dilichlet_") and (metric_name in ["logit"]):
                         continue
                     metric_idx = (np.linspace(0.0, 1.0, point_num) * (l_metric.size + u_metric.size - 1)).astype(np.int)
                     metric_vec = (np.sort(np.append(l_metric, u_metric)))[metric_idx]
@@ -184,7 +173,7 @@ def show_curve():
             print(graph_path)
             plt.savefig(graph_path)
 
-@hydra.main("dilichlet.yaml")
+@hydra.main("temperature.yaml")
 def main(cfg):
     print(cfg.pretty())
     seed = cfg.optim.seed
@@ -192,15 +181,14 @@ def main(cfg):
     lr = cfg.optim.lr
     focal_gamma = cfg.optim.focal_gamma
     epoch_num = cfg.optim.epoch_num
-    weight_decay_rate = cfg.optim.weight_decay_rate
     burnin_epoch = cfg.optim.burnin_epoch
-    kl_weight = cfg.optim.kl_weight
+    const_temp = cfg.optim.const_temp
+    weight_decay_rate = cfg.optim.weight_decay_rate
     log_sec = cfg.optim.log_sec
     weight_name = cfg.optim.weight_name
-    loss_type = cfg.optim.loss_type
     remove_class = cfg.data.remove_class
     remove_col_too = cfg.data.remove_col_too
-
+    
     init_fun, apply_fun = nn(10 - int(remove_col_too) * len(remove_class))
     rng = jax.random.PRNGKey(seed)
 
@@ -218,7 +206,7 @@ def main(cfg):
 
     def accuracy(opt_state, x, y):
         params = get_params(opt_state)
-        y_pred_idx = apply_fun(params, x).argmax(axis = -1) + int(remove_col_too)
+        y_pred_idx = apply_fun(params, x)[:,:-1].argmax(axis = -1) + int(remove_col_too)
         if remove_col_too:
             for rem_val in remove_class:
                 add_idxs = jnp.where(y_pred_idx >= rem_val)[0]
@@ -226,61 +214,21 @@ def main(cfg):
                     pred_idx = jax.ops.index_add(y_pred_idx, add_idxs, 1)
         return (y == y_pred_idx).mean()
     def ce_loss(params, x, y):
-        y_pred = apply_fun(params, x)
-        y_pred = jax.nn.softmax(y_pred)
+        applied = apply_fun(params, x)
+        logit = applied[:,:-1]
+        if const_temp is None:
+            beta = jnp.exp(applied[:,-1]).reshape((logit.shape[0], 1))
+        else:
+            beta = const_temp
+        y_pred = jax.nn.softmax(beta * logit)
         ce = (- y * ((1.0 - y_pred) ** focal_gamma) * jnp.log(y_pred + 1E-10)).sum(axis = -1).mean()
         loss = ce
         loss += weight_decay_rate * net_maker.weight_decay(params)
         return loss
-    def kl_to_ones(y, alpha):
-        alpha_ = y + (1.0 - y) * alpha
-        s_ = alpha_.sum(axis = -1, keepdims = True)
-        t1 = gammaln(s_).sum(axis = -1)
-        t2 = -(jnp.log(alpha_)).sum(axis = -1)
-        t3 = ((alpha_ - 1.0) * (digamma(alpha_) - digamma(s_))).sum(axis = -1)
-        kl = (t1 + t2 + t3).mean()
-        return kl
-    def calc_alpha(params, x):
-        y_pred = apply_fun(params, x)
-        if cfg.model.last == "softmax":
-            # the same achitecture as conventional ones
-            alpha = jnp.exp(y_pred)
-            alpha = jnp.maximum(alpha, 1E-10)
-        elif cfg.model.last == "relu":
-            # paper-written
-            evidence = jax.nn.relu(y_pred)
-            alpha = evidence + 1.0
-        elif cfg.model.last == "softmax_evidence":
-            evidence = jnp.exp(y_pred)
-            alpha = evidence + 1.0
-        else:
-            assert(0)
-        return alpha
-    def dirichlet_l2_loss(params, x, y, prio_weight):
-        alpha = calc_alpha(params, x)
-        s = alpha.sum(axis = -1, keepdims = True)
-        p = alpha / s
-        loss = ((y - p) ** 2 + p * (1.0 - p) / (s + 1.0)).sum(axis = -1).mean()
-        loss += weight_decay_rate * net_maker.weight_decay(params)
-        loss += prio_weight * kl_to_ones(y, alpha)
-        return loss
-    def dirichlet_ce_loss(params, x, y, prio_weight):
-        alpha = calc_alpha(params, x)
-        s = alpha.sum(axis = -1, keepdims = True)
-        loss = y * (digamma(s) - digamma(alpha))
-        loss = loss.sum(axis = -1).mean()
-        loss += weight_decay_rate * net_maker.weight_decay(params)
-        loss += prio_weight * kl_to_ones(y, alpha)
-        return loss
     @jax.jit
-    def update(idx, opt_state, x, y, prio_weight):
+    def update(idx, opt_state, x, y):
         params = get_params(opt_state)
-        if loss_type == "dili_ce":
-            loss_val, grad_val = jax.value_and_grad(dirichlet_ce_loss)(params, x, y, prio_weight)
-        elif loss_type == "dili_l2":
-            loss_val, grad_val = jax.value_and_grad(dirichlet_l2_loss)(params, x, y, prio_weight)
-        else:
-            loss_val, grad_val = jax.value_and_grad(ce_loss)(params, x, y)
+        loss_val, grad_val = jax.value_and_grad(ce_loss)(params, x, y)
         isnan_grad = net_maker.isnan_params(grad_val)
         isnan_loss = jnp.isnan(loss_val)
         isnan_flg  = jnp.logical_or(isnan_grad, isnan_loss)
@@ -305,9 +253,8 @@ def main(cfg):
     run_cnt = 0
     val_acc_max = 0
     while True:
-        prio_weight = min(kl_weight, proc_epoch / burnin_epoch)
         x, y = train.sample()
-        idx, loss_val, opt_state, isnan_grad = update(idx, opt_state, x, y, prio_weight)
+        idx, loss_val, opt_state, isnan_grad = update(idx, opt_state, x, y)
         if jnp.logical_not(isnan_grad):
             run_loss += loss_val
             run_cnt += 1
