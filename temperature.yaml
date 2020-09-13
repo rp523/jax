@@ -1,5 +1,3 @@
-model:
-  last: "softmax"
 optim:
   seed: 0
   batch_size: 128
@@ -8,10 +6,9 @@ optim:
   focal_gamma: 2.0
   epoch_num: 2000
   burnin_epoch: 500
-  kl_weight: 1.0
   log_sec: 20.0
   weight_name: "params.bin"
-  loss_type: "dili_l2"
+  const_temp: 
 data:
-  remove_class: []
-  remove_col_too: False
+  remove_class: [0]
+  remove_col_too: True
